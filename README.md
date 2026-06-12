@@ -16,9 +16,7 @@ Both work unmodified across Pro/Max seat, enterprise, and API-key billing.
 [`statusline/statusline-command.sh`](statusline/statusline-command.sh) — a cost & context
 dashboard. Example:
 
-```
-Fable 1M medium 3x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | claudefiles
-```
+![Fable 1M medium 3x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | claudefiles](statusline.png)
 
 Segments are spaced within a group and joined by ` | ` between groups, so the line reads
 as a few chunks rather than a flat row of fields:
