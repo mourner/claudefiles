@@ -40,9 +40,9 @@ function configure(env) {
     // fixtures. `.md/.log/.csv/…` stay exempt — you usually do want the whole doc. GUARD_EXTRA_EXT
     // (comma-separated, with or without leading dots) appends more, e.g. `py,go,rs`.
     const extra = (env.GUARD_EXTRA_EXT ?? '')
-        .split(',').map((e) => e.trim().replace(/^\./, '')).filter((e) => /^\w+$/.test(e));
+        .split(',').map(e => e.trim().replace(/^\./, '')).filter(e => /^\w+$/.test(e));
     GATED_EXT = new RegExp(
-        `\\.(ts|tsx|js|jsx|mjs|cjs|json|geojson${extra.length ? '|' + extra.join('|') : ''})$`, 'i');
+        `\\.(ts|tsx|js|jsx|mjs|cjs|json|geojson${extra.length ? `|${extra.join('|')}` : ''})$`, 'i');
 }
 
 // A deny is thrown (not written) so the checks can bail from deep in the call stack; decide() catches
@@ -64,7 +64,7 @@ function fileSize(path) {
     }
 }
 
-const kb = (bytes) => Math.round(bytes / 1024);
+const kb = bytes => Math.round(bytes / 1024);
 
 // ── Bash ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -77,10 +77,9 @@ const GREP = new Set(['grep', 'rg', 'egrep', 'fgrep']);
 const RANGE_READ = new Set(['cat', 'sed', 'awk', 'head', 'tail']);
 const PAGER = new Set(['less', 'more']);
 
-const isSymbol = (tok) =>
-    typeof tok === 'string' && tok.length >= 4 && !ALLOWLIST.test(tok) && SYMBOL.some((rx) => rx.test(tok));
+const isSymbol = tok => typeof tok === 'string' && tok.length >= 4 && !ALLOWLIST.test(tok) && SYMBOL.some(rx => rx.test(tok));
 
-const unquote = (s) => s.length >= 2 && (s[0] === '"' || s[0] === "'") && s.at(-1) === s[0] ? s.slice(1, -1) : s;
+const unquote = s => s.length >= 2 && (s[0] === '"' || s[0] === '\'') && s.at(-1) === s[0] ? s.slice(1, -1) : s;
 
 // Shell keywords that can precede the real command word at the start of a segment (loop/conditional
 // bodies, subshells, negation). Stripping them lets us read `do cat "$f"` as a `cat` command.
@@ -105,21 +104,21 @@ function checkGrep(tokens) {
     if (!isSymbol(pattern)) return; // no pattern, or not symbol-shaped → fail open
 
     // Bare = no path, or path is the whole tree (`.` / `./`).
-    const paths = positionals.slice(1).filter((p) => p !== '.' && p !== './');
+    const paths = positionals.slice(1).filter(p => p !== '.' && p !== './');
     if (paths.length > 0) {
         // A scoped grep is the escape hatch — UNLESS every target path is a literal that doesn't
         // exist. That's a guaranteed-empty path-guess; one `find` to learn the layout beats
         // flailing greps. Tokens the shell would expand (globs, $vars, ~, command subst) can't be
         // resolved statically, so they don't count as literal — we fail open on those.
-        const literal = paths.filter((p) => !/[*?[\]{}$~`]/.test(p));
-        if (literal.length === paths.length && literal.every((p) => !existsSync(p))) {
+        const literal = paths.filter(p => !/[*?[\]{}$~`]/.test(p));
+        if (literal.length === paths.length && literal.every(p => !existsSync(p))) {
             deny(`No such path: ${literal.join(', ')}. Use \`find\` to find the layout first.`);
         }
         return; // explicit existing subdir/file → scoped → allow
     }
 
     deny(`"${pattern}" looks like a symbol — scope it to a subdir: \`grep -n ${pattern} <dir>/\`. ` +
-        `For tree-wide references, use your editor's LSP find-references.`);
+        'For tree-wide references, use your editor\'s LSP find-references.');
 }
 
 // Block cat/sed/awk/head/tail used to read a code or JSON file into context — the Read tool
@@ -133,16 +132,16 @@ function checkGrep(tokens) {
 function checkRangeRead(tokens) {
     const cmd = tokens[0];
     if (!RANGE_READ.has(cmd)) return;
-    const target = tokens.slice(1).map(unquote).find((t) => GATED_EXT.test(t));
+    const target = tokens.slice(1).map(unquote).find(t => GATED_EXT.test(t));
     if (!target) return;
     // `sed -i`/`-i.bak`/`--in-place`, `gawk -i inplace` are edits, not reads — let them through.
-    if (tokens.some((t) => /^-i/.test(t) || t === '--in-place')) return;
+    if (tokens.some(t => /^-i/.test(t) || t === '--in-place')) return;
     // A redirect (`>`/`>>`) or heredoc (`<<EOF`) means output goes to a file / is a heredoc body,
     // not into context — outside this guard's charter (and the matched path is the write target).
     // Catch redirects with no surrounding spaces too (`cat a.json>out`): any unquoted `>` not part
     // of a `<>`/`2>`-style construct still redirects output. `/[^<]>|^>/` matches a bare `>` token,
     // a `foo>bar` token, and `>>`, while skipping a lone `<<EOF`.
-    if (tokens.some((t) => t.startsWith('<<') || /[^<]>|^>/.test(t))) return;
+    if (tokens.some(t => t.startsWith('<<') || /[^<]>|^>/.test(t))) return;
     // A literal path that doesn't exist is a guess — point at `find`, like checkGrep does. Tokens
     // the shell would expand (globs, $vars, ~, command subst) can't be resolved statically, so we
     // skip them and fall through to the Read nudge.
@@ -158,12 +157,12 @@ function checkRangeRead(tokens) {
 // anything else (a find with no range-read exec is fine).
 function checkFindExec(tokens) {
     if (tokens[0] !== 'find') return;
-    const ei = tokens.findIndex((t) => t === '-exec' || t === '-execdir');
+    const ei = tokens.findIndex(t => t === '-exec' || t === '-execdir');
     if (ei === -1) return;
     if (RANGE_READ.has(tokens[ei + 1])) {
         deny(`\`find … ${tokens[ei]} ${tokens[ei + 1]} …\` dumps every matched file whole. ` +
-            `Search across them with a scoped \`rg <pattern> <paths>\`, or read specific files with ` +
-            `the Read tool (\`offset\`+\`limit\`).`);
+            'Search across them with a scoped `rg <pattern> <paths>`, or read specific files with ' +
+            'the Read tool (`offset`+`limit`).');
     }
 }
 
@@ -242,7 +241,7 @@ function checkBash(input) {
     // disk; later stages filter stdout). Best-effort: a separator inside quotes may mis-split, which
     // only ever makes us fail open.
     const segments = cmd.split(/&&|\|\||;|\n/);
-    const segTokens = segments.map((s) => stripLead(s.split('|')[0].split(/\s+/).filter(Boolean)));
+    const segTokens = segments.map(s => stripLead(s.split('|')[0].split(/\s+/).filter(Boolean)));
 
     for (let i = 0; i < segments.length; i++) {
         const tokens = segTokens[i];
@@ -269,12 +268,11 @@ function checkBash(input) {
     // `for f in a.ts b.ts; do cat "$f"; done` — the read target is the loop variable, so the
     // per-segment checkRangeRead (which keys off the file token) can't see it. Catch the shape:
     // a for/while whose in-list names gated files, with a range-read command in the loop body.
-    const loopAt = segTokens.findIndex((t) =>
-        (t[0] === 'for' || t[0] === 'while') && t.some((x) => GATED_EXT.test(unquote(x))));
+    const loopAt = segTokens.findIndex(t => (t[0] === 'for' || t[0] === 'while') && t.some(x => GATED_EXT.test(unquote(x))));
     if (loopAt !== -1) {
         const doneAt = segTokens.findIndex((t, i) => i > loopAt && t.includes('done'));
         const body = segTokens.slice(loopAt + 1, doneAt === -1 ? undefined : doneAt);
-        if (body.some((t) => RANGE_READ.has(t[0]))) {
+        if (body.some(t => RANGE_READ.has(t[0]))) {
             deny('Reading files in a loop dumps each one whole — read the parts you need with the ' +
                 'Read tool (`offset`+`limit`), or search across them with a scoped `rg <pattern> <paths>`.');
         }
@@ -320,7 +318,7 @@ function checkWebFetch(input) {
     if (kind === 'blob' && rest.length >= 2) {
         const [ref, ...pathParts] = rest;
         const path = pathParts.join('/');
-        deny(`Fetching a GitHub blob page pulls the whole rendered HTML. Get the raw file instead: ` +
+        deny('Fetching a GitHub blob page pulls the whole rendered HTML. Get the raw file instead: ' +
             `\`curl -s https://raw.githubusercontent.com/${slug}/${ref}/${path}\` ` +
             `(or \`gh api repos/${slug}/contents/${path}?ref=${ref} --jq .content | base64 -d\`).`);
     }
@@ -350,14 +348,14 @@ function checkLsp(input) {
 // — a Deny thrown by a check becomes its reason; any other throw (bad input, stat error, check bug)
 // falls through to allow. Exported so the test suite can exercise the logic in-process. `env`
 // defaults to process.env; tests pass a per-case env to drive GUARD_MAX_KB / GUARD_EXTRA_EXT.
-export function decide({tool_name, tool_input} = {}, env = process.env) {
+export function decide({tool_name: toolName, tool_input: toolInput} = {}, env = process.env) {
     configure(env);
-    const input = tool_input ?? {};
+    const input = toolInput ?? {};
     try {
-        if (tool_name === 'Bash') checkBash(input);
-        else if (tool_name === 'Read') checkRead(input);
-        else if (tool_name === 'WebFetch') checkWebFetch(input);
-        else if (tool_name === 'LSP') checkLsp(input);
+        if (toolName === 'Bash') checkBash(input);
+        else if (toolName === 'Read') checkRead(input);
+        else if (toolName === 'WebFetch') checkWebFetch(input);
+        else if (toolName === 'LSP') checkLsp(input);
     } catch (e) {
         if (e instanceof Deny) return e.reason;
         // parse/read error or check bug → fall through to allow

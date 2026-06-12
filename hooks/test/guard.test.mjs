@@ -49,7 +49,7 @@ for (const c of cases) {
     test(c.name, () => {
         const reason = decide({tool_name: c.tool_name, tool_input: c.tool_input}, {...process.env, ...(c.env ?? {})});
         if (c.expect === 'deny') {
-            assert.ok(reason != null, `expected a deny, got allow`);
+            assert.ok(reason != null, 'expected a deny, got allow');
             if (c.denyMatch) assert.ok(reason.includes(c.denyMatch), `deny reason missing "${c.denyMatch}": ${reason}`);
         } else {
             assert.equal(reason, null, `expected an allow, got a deny: ${reason}`);
