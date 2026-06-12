@@ -1,11 +1,12 @@
 #!/bin/bash
 # Claude Code status line — a cost & context efficiency dashboard. Example:
 #
-#   Fable 1M | medium | 5x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ | Σ$14.90 | 169k | waste: 3% | ❄18:10 | skymap
+#   Fable 1M medium 5x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | skymap
 #
-# Segments: model | effort | cost multiplier vs Sonnet-low | rate limits w/ reset |
-# Δ turn cost | Σ session cost | context tokens | uncached-input share | prompt-cache
-# expiry | cwd. Universal across billing types: rate-limit segments render only when
+# Segments, grouped by ` | ` and spaced within a group: model + effort + cost
+# multiplier vs Sonnet-low | rate limits w/ reset | Δ turn cost + Σ session cost |
+# context tokens + prompt-cache countdown | cwd. Universal across billing types:
+# rate-limit segments render only when
 # the account reports them, costs are computed from the session transcript at public
 # API prices, and the prompt-cache TTL is detected from actual usage — so seat,
 # enterprise, and API-key billing all work unmodified. Requires bash and jq.
@@ -85,12 +86,10 @@ fmt_reset() {
   fi
 }
 
-# ---- Context tokens & cache waste ----
+# ---- Context tokens ----
 # Context display includes output_tokens (the last response occupies the window on
-# the next request); waste% stays input-only so the cache-coverage signal is exact.
-IN_TOTAL=$((INP + CC + CR))
-TOTAL=$((IN_TOTAL + OUT))
-WASTE=$([ "$IN_TOTAL" -gt 0 ] && echo $(( (INP * 100 + IN_TOTAL / 2) / IN_TOTAL )) || echo 0)
+# the next request).
+TOTAL=$((INP + CC + CR + OUT))
 TOKENS=$([ "$TOTAL" -ge 1000 ] && echo "$((TOTAL / 1000))k" || echo "$TOTAL")
 
 # Context thresholds from context_window_size (200k or 1M) — no model-id sniffing.
@@ -106,9 +105,6 @@ else
   CTX_T1=60000; CTX_T2=120000; CTX_T3=160000
 fi
 TCOLOR_CTX=$(tier_color "$TOTAL" "$CTX_T1" "$CTX_T2" "$CTX_T3")
-
-# Waste% = INP / (INP+CC+CR): share of input that's neither cached nor being cached.
-WCOLOR=$(tier_color "$WASTE" 10 25 50)
 
 # ---- Cost burn (Σ session, Δ current turn) ----
 # Hybrid sourcing. Σ prefers cost.total_cost_usd when present (API/enterprise
@@ -212,15 +208,24 @@ DCOLOR=$(tier_color5 "$BURN_TURN_M" 100 500 1500 4000)
 BURN_SESS_FMT=$(fmt_cost "$BURN_SESS_M")
 BURN_TURN_FMT=$(fmt_cost "$BURN_TURN_M")
 
-# ---- Cache expiry from last transcript activity ----
-# Reply before ❄HH:MM and the context re-reads from cache at 0.1x; after it, the
-# whole prompt is re-written at full price. TTL was detected above from the actual
+# ---- Cache expiry countdown from last transcript activity ----
+# Reply within ❄<countdown> and the context re-reads from cache at 0.1x; once it
+# lapses the whole prompt is re-written at full 1.25x. A countdown ("4m") answers
+# "should I hurry?" directly, where a wall-clock would force mental subtraction; the
+# 5s status-line refresh keeps it live. TTL was detected above from the actual
 # cache-write tier (1h on subscription main threads, 5m on API billing); until the
-# first response reveals it, assume the conservative 5m.
+# first response reveals it, assume the conservative 5m. Color by time left: red
+# when nearly gone, so a glance says whether the window is worth racing.
 [ "$CACHE_TTL" -gt 0 ] || CACHE_TTL=300
+EXPIRY_COLOR="$GREEN"
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-  EXPIRY=$(( $(file_mtime "$TRANSCRIPT") + CACHE_TTL ))
-  EXPIRY_FMT=$(date -r "$EXPIRY" +%H:%M 2>/dev/null || date -d "@$EXPIRY" +%H:%M 2>/dev/null || echo "?")
+  LEFT=$(( $(file_mtime "$TRANSCRIPT") + CACHE_TTL - $(date +%s) ))
+  if   [ "$LEFT" -le 0 ];   then EXPIRY_FMT="now"; EXPIRY_COLOR="$RED"
+  elif [ "$LEFT" -lt 60 ];  then EXPIRY_FMT="${LEFT}s"; EXPIRY_COLOR="$RED"
+  elif [ "$LEFT" -lt 3600 ]; then EXPIRY_FMT="$((LEFT / 60))m"
+    [ "$LEFT" -lt 120 ] && EXPIRY_COLOR="$ORANGE"
+  else                          EXPIRY_FMT="$((LEFT / 3600))h"
+  fi
 else
   EXPIRY_FMT="?"
 fi
@@ -230,6 +235,10 @@ fi
 # Populated after the first model response on subscription seats; absent on API
 # billing, so these segments disappear there. used_percentage is quantized to whole
 # percent server-side — show ints. Tiers: green <50, cyan <75, orange <90, red >=90.
+# Label and value are colon-bound ("5h:5%") so each reads as one token; the ↺reset
+# hint follows after a space, and the two limits are joined by ` | ` (same separator
+# as between groups) so the hierarchy is unambiguous: pipe between limits, space
+# within a limit.
 LIMIT_SEG=""
 if [ -n "$FIVE_H" ]; then
   FH_INT=$(printf '%.0f' "$FIVE_H")
@@ -273,15 +282,31 @@ esac
 
 FOLDER=$(basename "${CWD:-$PWD}")
 
-# ---- Compose output (zero/absent segments are dropped) ----
-LINE="$SHORT"
-[ -n "$EFFORT" ] && LINE="$LINE | $EFFORT"
-LINE="$LINE | ${MCOLOR}${MULT_FMT}${RESET}"
-[ -n "$LIMIT_SEG" ] && LINE="$LINE | $LIMIT_SEG"
-[ "$BURN_TURN_M" -gt 0 ] && LINE="$LINE | Δ${DCOLOR}${BURN_TURN_FMT}${RESET}"
-[ "$BURN_SESS_M" -gt 0 ] && LINE="$LINE | Σ${SCOLOR}${BURN_SESS_FMT}${RESET}"
-LINE="$LINE | ${TCOLOR_CTX}${TOKENS}${RESET}"
-[ "$WASTE" -gt 0 ] && LINE="$LINE | waste: ${WCOLOR}${WASTE}%${RESET}"
-LINE="$LINE | ❄${EXPIRY_FMT}"
-[ -n "$FOLDER" ] && LINE="$LINE | $FOLDER"
+# ---- Compose output ----
+# Pipes separate groups; spaces separate segments within a group. Related signals
+# (model/effort/mult, the two rate limits, Δ/Σ cost, tokens/cache) sit together so
+# the eye parses four chunks, not eleven. Empty segments collapse; a group that
+# ends up empty leaves no stray pipe (groups are joined only when non-empty).
+
+# Model group: label, effort, cost multiplier.
+MODEL_GRP="$SHORT"
+[ -n "$EFFORT" ] && MODEL_GRP="$MODEL_GRP $EFFORT"
+MODEL_GRP="$MODEL_GRP ${MCOLOR}${MULT_FMT}${RESET}"
+
+# Cost group: Δ turn, Σ session. Shown as a stable pair once the session has any
+# cost, rather than dropping Δ when it's momentarily zero. Δ resets to 0 at each new
+# user prompt and then grows in place as the status line re-runs (every ~5s) and the
+# transcript gains a usage row per tool round — so the turn cost ticks up live and
+# the layout never shifts. Below it would only flicker in/out between turns.
+COST_GRP=""
+[ "$BURN_SESS_M" -gt 0 ] && COST_GRP="Δ${DCOLOR}${BURN_TURN_FMT}${RESET} Σ${SCOLOR}${BURN_SESS_FMT}${RESET}"
+
+# Context group: tokens, cache countdown.
+CTX_GRP="${TCOLOR_CTX}${TOKENS}${RESET} ❄${EXPIRY_COLOR}${EXPIRY_FMT}${RESET}"
+
+# Join non-empty groups with ` | `.
+LINE="$MODEL_GRP"
+for g in "$LIMIT_SEG" "$COST_GRP" "$CTX_GRP" "$FOLDER"; do
+  [ -n "$g" ] && LINE="$LINE | $g"
+done
 echo "$LINE"

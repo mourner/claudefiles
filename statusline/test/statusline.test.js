@@ -33,9 +33,10 @@ function status(overrides = {}) {
 test('statusline renders the model label, effort, multiplier, context and cwd', () => {
     const line = render(status());
     const segs = line.split(' | ');
-    assert.equal(segs[0], 'Sonnet');
-    assert.equal(segs[1], 'medium');
-    assert.match(segs[2], /^\d+(\.\d+)?x$/);   // cost multiplier
+    const model = segs[0].split(' ');          // model group: label, effort, multiplier
+    assert.equal(model[0], 'Sonnet');
+    assert.equal(model[1], 'medium');
+    assert.match(model[2], /^\d+(\.\d+)?x$/);   // cost multiplier
     assert.equal(segs.at(-1), 'myproject');    // cwd basename
 });
 
@@ -44,25 +45,36 @@ test('statusline appends "1M" to the model label when the context window is 1M',
         model: {display_name: 'Fable', id: 'claude-fable-5'},
         context_window: {context_window_size: 1000000, current_usage: {}},
     }));
-    assert.equal(line.split(' | ')[0], 'Fable 1M');
+    assert.match(line.split(' | ')[0], /^Fable 1M /);
 });
 
 test('statusline formats context tokens in thousands', () => {
     const line = render(status({
         context_window: {context_window_size: 200000, current_usage: {input_tokens: 169000}},
     }));
-    assert.ok(line.split(' | ').includes('169k'), line);
+    assert.match(line, /\b169k\b/, line);
 });
 
 test('statusline rate-limit segments render only when the account reports them', () => {
     const without = render(status());
-    assert.ok(!without.includes('5h:'), without);
+    assert.ok(!/\b5h:/.test(without), without);
 
     const withLimits = render(status({
         rate_limits: {five_hour: {used_percentage: 16}, seven_day: {used_percentage: 2}},
     }));
     assert.match(withLimits, /5h:16%/);
     assert.match(withLimits, /7d:2%/);
+});
+
+test('statusline shows the limit reset hint after a space, limits joined by a pipe', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const line = render(status({
+        rate_limits: {
+            five_hour: {used_percentage: 16, resets_at: now + 7200},
+            seven_day: {used_percentage: 2, resets_at: now + 3 * 86400},
+        },
+    }));
+    assert.match(line, /5h:16% ↺2h \| 7d:2% ↺3d/);
 });
 
 test('statusline session cost uses total_cost_usd when present', () => {

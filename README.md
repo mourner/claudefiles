@@ -17,22 +17,24 @@ Both work unmodified across Pro/Max seat, enterprise, and API-key billing.
 dashboard. Example:
 
 ```
-Fable 1M | medium | 5x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ | Σ$14.90 | 169k | waste: 3% | ❄18:10 | claudefiles
+Fable 1M medium 5x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | claudefiles
 ```
 
-| Segment | Meaning |
-| --- | --- |
-| `Fable 1M` | model (and context window) |
-| `medium` | effort level |
-| `5x` | cost multiplier vs Sonnet-low |
-| `5h:16% ↺2h` | 5-hour rate-limit usage and reset (only when the account reports it) |
-| `7d:2% ↺3d` | weekly rate limit and reset |
-| `Δ10¢` | last-turn cost |
-| `Σ$14.90` | session cost so far |
-| `169k` | context tokens in use |
-| `waste: 3%` | uncached-input share |
-| `❄18:10` | prompt-cache expiry |
-| `claudefiles` | cwd |
+Segments are spaced within a group and joined by ` | ` between groups, so the line reads
+as a few chunks rather than a flat row of fields:
+
+| Group | Segment | Meaning |
+| --- | --- | --- |
+| model | `Fable 1M` | model (and context window) |
+| | `medium` | effort level |
+| | `5x` | cost multiplier vs Sonnet-low |
+| limits | `5h:16% ↺2h` | 5-hour rate-limit usage and reset (only when the account reports it) |
+| | `7d:2% ↺3d` | weekly rate limit and reset |
+| cost | `Δ10¢` | current-turn cost — resets each prompt and grows in place as the turn runs |
+| | `Σ$14.90` | session cost so far |
+| context | `169k` | context tokens in use |
+| | `❄4m` | countdown until the prompt cache expires (reply within it to re-read at 0.1x) |
+| cwd | `claudefiles` | cwd |
 
 Costs come from the session transcript at public **API list prices** — on a flat-rate seat
 the dollar figures are notional, not what you're billed. The prompt-cache TTL is detected
