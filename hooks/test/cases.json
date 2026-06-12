@@ -1,0 +1,152 @@
+[
+  {
+    "name": "bare grep for a symbol is denied (scope it)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "grep someSymbolName"},
+    "expect": "deny",
+    "denyMatch": "looks like a symbol"
+  },
+  {
+    "name": "grep scoped to an existing dir is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "grep someSymbolName src/"},
+    "expect": "allow"
+  },
+  {
+    "name": "grep at a nonexistent path is denied as a path-guess",
+    "tool_name": "Bash",
+    "tool_input": {"command": "grep someSymbolName nope/"},
+    "expect": "deny",
+    "denyMatch": "No such path"
+  },
+  {
+    "name": "grep for an allowlisted word (TODO) is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "grep TODO"},
+    "expect": "allow"
+  },
+  {
+    "name": "git grep is exempt",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git grep someSymbolName"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of an existing JSON file is denied (use Read)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.json"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "cat with a spaced redirect is allowed (write target)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.json > out"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat with a no-space redirect is allowed (write target)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.json>out"},
+    "expect": "allow"
+  },
+  {
+    "name": "sed -i in-place edit is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -i 's/a/b/' foo.ts"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat piped into jq (a filter) is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.json | jq .x"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat piped into head (a slicer) is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.ts | head -50"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "a heredoc body containing cat foo.ts is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat <<EOF\ncat foo.ts\nEOF"},
+    "expect": "allow"
+  },
+  {
+    "name": "reading gated files in a for-loop is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "for f in a.ts b.ts; do cat \"$f\"; done"},
+    "expect": "deny",
+    "denyMatch": "loop"
+  },
+  {
+    "name": "find -exec cat is denied (bulk dump)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "find . -name '*.ts' -exec cat {} \\;"},
+    "expect": "deny",
+    "denyMatch": "matched file"
+  },
+  {
+    "name": "Read of a >16KB .ts file without limit is denied",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "big.ts"},
+    "expect": "deny",
+    "denyMatch": "too big"
+  },
+  {
+    "name": "Read of a >16KB .ts file with a limit is allowed",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "big.ts", "limit": 100},
+    "expect": "allow"
+  },
+  {
+    "name": "Read of a >16KB .md file is allowed (not gated)",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "big.md"},
+    "expect": "allow"
+  },
+  {
+    "name": "WebFetch of a GitHub issue is denied (use gh)",
+    "tool_name": "WebFetch",
+    "tool_input": {"url": "https://github.com/o/r/issues/123"},
+    "expect": "deny",
+    "denyMatch": "gh issue view"
+  },
+  {
+    "name": "WebFetch of a GitHub blob is denied (use raw)",
+    "tool_name": "WebFetch",
+    "tool_input": {"url": "https://github.com/o/r/blob/main/x.ts"},
+    "expect": "deny",
+    "denyMatch": "raw.githubusercontent.com"
+  },
+  {
+    "name": "git diff with two dots is denied (folds in main-only changes)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git diff main..feature"},
+    "expect": "deny",
+    "denyMatch": "three dots"
+  },
+  {
+    "name": "git diff with three dots is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git diff main...feature"},
+    "expect": "allow"
+  },
+  {
+    "name": "GUARD_EXTRA_EXT=py makes cat of a .py file deny",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.py"},
+    "env": {"GUARD_EXTRA_EXT": "py"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "without GUARD_EXTRA_EXT, cat of a .py file is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.py"},
+    "expect": "allow"
+  }
+]

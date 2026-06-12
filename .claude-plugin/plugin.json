@@ -1,0 +1,9 @@
+{
+  "name": "claudefiles",
+  "version": "0.1.0",
+  "description": "A PreToolUse guard hook that blocks context-wasting tool calls (tree-wide greps, whole-file cat/sed dumps, oversized reads, noisy GitHub fetches) and nudges toward scoped alternatives.",
+  "author": {
+    "name": "Volodymyr Agafonkin"
+  },
+  "homepage": "https://github.com/mourner/claudefiles"
+}

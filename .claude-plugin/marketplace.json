@@ -1,0 +1,14 @@
+{
+  "name": "claudefiles",
+  "description": "Claude Code efficiency tools by Volodymyr Agafonkin",
+  "owner": {
+    "name": "Volodymyr Agafonkin"
+  },
+  "plugins": [
+    {
+      "name": "claudefiles",
+      "source": ".",
+      "description": "Guard hook that blocks context-wasting tool calls and nudges toward scoped alternatives."
+    }
+  ]
+}

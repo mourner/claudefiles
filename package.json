@@ -1,0 +1,10 @@
+{
+  "name": "@mourner/claudefiles",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Claude Code efficiency tools: a PreToolUse guard hook and a cost/usage status line.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test 'hooks/test/*.test.mjs'"
+  }
+}
