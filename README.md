@@ -11,8 +11,7 @@ Both work unmodified across Pro/Max seat, enterprise, and API-key billing.
 
 ## statusline
 
-[`statusline/statusline-command.sh`](statusline/statusline-command.sh) — a cost & context
-dashboard. Example:
+[`statusline/statusline-command.sh`](statusline/statusline-command.sh) — a custom status line for efficiency-conscious sessions. Example:
 
 ![Fable 1M medium 3x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | claudefiles](statusline.png)
 
@@ -83,7 +82,7 @@ The 16 KB size gate and the list of gated extensions are constants at the top of
 
 ```
 /plugin marketplace add mourner/claudefiles
-/plugin install claudefiles@claudefiles
+/plugin install claudefiles@mourner
 ```
 
 ### Install (manual hook)

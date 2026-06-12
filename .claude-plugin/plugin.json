@@ -1,7 +1,7 @@
 {
   "name": "claudefiles",
   "version": "0.1.0",
-  "description": "A PreToolUse guard hook that blocks context-wasting tool calls (tree-wide greps, whole-file cat/sed dumps, oversized reads, noisy GitHub fetches) and nudges toward scoped alternatives.",
+  "description": "Volodymyr Agafonkin's Claude Code efficiency kit: a PreToolUse guard hook that blocks context-wasting tool calls, plus related tooling.",
   "author": {
     "name": "Volodymyr Agafonkin"
   },

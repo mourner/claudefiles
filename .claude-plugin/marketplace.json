@@ -1,6 +1,6 @@
 {
-  "name": "claudefiles",
-  "description": "Claude Code efficiency tools by Volodymyr Agafonkin",
+  "name": "mourner",
+  "description": "Volodymyr Agafonkin's Claude Code marketplace",
   "owner": {
     "name": "Volodymyr Agafonkin"
   },
@@ -8,7 +8,7 @@
     {
       "name": "claudefiles",
       "source": ".",
-      "description": "Guard hook that blocks context-wasting tool calls and nudges toward scoped alternatives."
+      "description": "Efficiency kit: a guard hook that blocks context-wasting tool calls and nudges toward scoped alternatives."
     }
   ]
 }
