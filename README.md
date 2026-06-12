@@ -25,16 +25,16 @@ as a few chunks rather than a flat row of fields:
 
 | Group | Segment | Meaning |
 | --- | --- | --- |
-| model | `Fable 1M` | model (and context window) |
+| model | `Fable 1M` | model, with context-window size |
 | | `medium` | effort level |
-| | `5x` | cost multiplier vs Sonnet-low |
-| limits | `5h:16% ↺2h` | 5-hour rate-limit usage and reset (only when the account reports it) |
-| | `7d:2% ↺3d` | weekly rate limit and reset |
-| cost | `Δ10¢` | current-turn cost — resets each prompt and grows in place as the turn runs |
+| | `5x` | roughly how much this model+effort costs per prompt vs. Sonnet at low effort |
+| limits | `5h:16% ↺2h` | 5-hour rate limit: used, and time until it resets (only when the account reports it) |
+| | `7d:2% ↺3d` | weekly rate limit: used, and time until it resets |
+| cost | `Δ10¢` | this turn's cost — starts at zero each prompt and climbs as the turn runs |
 | | `Σ$14.90` | session cost so far |
 | context | `169k` | context tokens in use |
-| | `❄4m` | countdown until the prompt cache expires (reply within it to re-read at 0.1x) |
-| cwd | `claudefiles` | cwd |
+| | `❄4m` | time left before the prompt cache expires — past it, the next turn pays full price to rebuild it instead of the 0.1x cached read |
+| cwd | `claudefiles` | working directory |
 
 Costs come from the session transcript at public **API list prices** — on a flat-rate seat
 the dollar figures are notional, not what you're billed. The prompt-cache TTL is detected
