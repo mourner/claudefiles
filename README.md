@@ -1,4 +1,4 @@
-# claudefiles
+# @mourner/claudefiles
 
 Two small [Claude Code](https://claude.com/claude-code) efficiency tools:
 
@@ -17,7 +17,7 @@ Both work unmodified across Pro/Max seat, enterprise, and API-key billing.
 dashboard. Example:
 
 ```
-Fable 1M medium 5x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | claudefiles
+Fable 1M medium 3x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | claudefiles
 ```
 
 Segments are spaced within a group and joined by ` | ` between groups, so the line reads
@@ -27,7 +27,7 @@ as a few chunks rather than a flat row of fields:
 | --- | --- | --- |
 | model | `Fable 1M` | model, with context-window size |
 | | `medium` | effort level |
-| | `5x` | roughly how much this model+effort costs per prompt vs. Sonnet at low effort |
+| | `3x` | roughly how much this model+effort costs per prompt, relative to Opus at low effort (the 1x baseline) |
 | limits | `5h:16% ↺2h` | 5-hour rate limit: used, and time until it resets (only when the account reports it) |
 | | `7d:2% ↺3d` | weekly rate limit: used, and time until it resets |
 | cost | `Δ10¢` | this turn's cost — starts at zero each prompt and climbs as the turn runs |

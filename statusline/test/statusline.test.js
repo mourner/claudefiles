@@ -70,8 +70,8 @@ test('statusline shows the limit reset hint after a space, limits joined by a pi
     const now = Math.floor(Date.now() / 1000);
     const line = render(status({
         rate_limits: {
-            five_hour: {used_percentage: 16, resets_at: now + 7200},
-            seven_day: {used_percentage: 2, resets_at: now + 3 * 86400},
+            five_hour: {used_percentage: 16, resets_at: now + 7200 + 60},
+            seven_day: {used_percentage: 2, resets_at: now + 3 * 86400 + 60},
         },
     }));
     assert.match(line, /5h:16% ↺2h \| 7d:2% ↺3d/);

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Claude Code status line — a cost & context efficiency dashboard. Example:
 #
-#   Fable 1M medium 5x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | skymap
+#   Fable 1M medium 3x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | skymap
 #
 # Segments, grouped by ` | ` and spaced within a group: model + effort + cost
-# multiplier vs Sonnet-low | rate limits w/ reset | Δ turn cost + Σ session cost |
+# multiplier vs Opus-low | rate limits w/ reset | Δ turn cost + Σ session cost |
 # context tokens + prompt-cache countdown | cwd. Universal across billing types:
 # rate-limit segments render only when
 # the account reports them, costs are computed from the session transcript at public
@@ -92,15 +92,19 @@ fmt_reset() {
 TOTAL=$((INP + CC + CR + OUT))
 TOKENS=$([ "$TOTAL" -ge 1000 ] && echo "$((TOTAL / 1000))k" || echo "$TOTAL")
 
-# Context thresholds from context_window_size (200k or 1M) — no model-id sniffing.
-# Sonnet's 1M tiers are lower: its quality degrades earlier in-context.
+# Context thresholds from context_window_size alone — no model-id sniffing. The
+# split is by window, not model family. A 200k window rides close to the top
+# (30/60/80%) because auto-compact is the binding wall. A 1M window does NOT get a
+# proportionally larger budget: quality noticeably degrades past ~200k on every 1M
+# model (not just Sonnet), and each turn re-reads the whole window, so a big context
+# is both dumber and costlier. The 1M tiers are therefore tuned to a deliberate
+# working ceiling (~300k, never the full window): green tracks a healthy <100k,
+# orange nudges to compact at 160k, red means "at your ceiling, compact now" by
+# 260k. The cost half of this is also visible in the Δ segment.
 # Tiers: green = healthy, cyan = normal working range, orange = consider /compact
 # soon, red = compact now (auto-compact imminent or context bloat hurting quality).
 if [ "$CTX_SIZE" -ge 1000000 ]; then
-  case "$MODEL_ID" in
-    *sonnet*) CTX_T1=100000; CTX_T2=250000; CTX_T3=500000 ;;
-    *)        CTX_T1=150000; CTX_T2=350000; CTX_T3=650000 ;;
-  esac
+  CTX_T1=80000; CTX_T2=160000; CTX_T3=260000
 else
   CTX_T1=60000; CTX_T2=120000; CTX_T3=160000
 fi
@@ -142,6 +146,11 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # tool_result — bare startswith("<") would misclassify pasted XML/HTML.
   # The cache TTL comes from which tier the main thread actually writes to
   # (usage.cache_creation breakdown), so no billing-type assumptions are needed.
+  # A single request can write breakpoints to both tiers at once (the API allows it),
+  # so when both appear the shortest live TTL wins: the 5m blocks expire first, and
+  # that earlier deadline is when the next turn starts paying to rebuild. Claude Code
+  # doesn't mix tiers today, so this is defensive — but a too-long countdown would be
+  # the dangerous failure, hiding churn that's already happening.
   # Dedup by message.id: Claude Code logs a multi-content-block assistant response
   # across several transcript lines, each repeating the *same* usage object, so a
   # naive per-line sum double-counts (~2x on tool-using turns). `seen` keeps the
@@ -160,8 +169,8 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
           else .t += cost($m) | .d += cost($m)
             | (if $id != "" then .seen[$id] = true else . end)
             | ($m.message.usage.cache_creation // {}) as $cc
-            | if   ($cc.ephemeral_1h_input_tokens // 0) > 0 then .ttl = 3600
-              elif ($cc.ephemeral_5m_input_tokens // 0) > 0 then .ttl = 300
+            | if   ($cc.ephemeral_5m_input_tokens // 0) > 0 then .ttl = 300
+              elif ($cc.ephemeral_1h_input_tokens // 0) > 0 then .ttl = 3600
               else . end
           end
       else . end)
@@ -214,17 +223,24 @@ BURN_TURN_FMT=$(fmt_cost "$BURN_TURN_M")
 # "should I hurry?" directly, where a wall-clock would force mental subtraction; the
 # 5s status-line refresh keeps it live. TTL was detected above from the actual
 # cache-write tier (1h on subscription main threads, 5m on API billing); until the
-# first response reveals it, assume the conservative 5m. Color by time left: red
-# when nearly gone, so a glance says whether the window is worth racing.
+# first response reveals it, assume the conservative 5m. The countdown is rendered
+# NEUTRAL (terminal default) while there's plenty of time — color only appears once
+# it matters, so it doesn't visually conflate with the green-ish token count beside
+# it. Warning thresholds scale with the TTL (orange < TTL/5, red < TTL/10) so they
+# fire proportionally on both tiers: orange 12m / red 6m on 1h, orange 60s / red 30s
+# on 5m. (A fixed 1-2min cutoff would leave a 1h cache silent until its last minute.)
 [ "$CACHE_TTL" -gt 0 ] || CACHE_TTL=300
-EXPIRY_COLOR="$GREEN"
+ORANGE_AT=$((CACHE_TTL / 5)); RED_AT=$((CACHE_TTL / 10))
+EXPIRY_COLOR=""
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   LEFT=$(( $(file_mtime "$TRANSCRIPT") + CACHE_TTL - $(date +%s) ))
-  if   [ "$LEFT" -le 0 ];   then EXPIRY_FMT="now"; EXPIRY_COLOR="$RED"
-  elif [ "$LEFT" -lt 60 ];  then EXPIRY_FMT="${LEFT}s"; EXPIRY_COLOR="$RED"
+  if   [ "$LEFT" -le 0 ];    then EXPIRY_FMT="now"
+  elif [ "$LEFT" -lt 60 ];   then EXPIRY_FMT="${LEFT}s"
   elif [ "$LEFT" -lt 3600 ]; then EXPIRY_FMT="$((LEFT / 60))m"
-    [ "$LEFT" -lt 120 ] && EXPIRY_COLOR="$ORANGE"
-  else                          EXPIRY_FMT="$((LEFT / 3600))h"
+  else                            EXPIRY_FMT="$((LEFT / 3600))h"
+  fi
+  if   [ "$LEFT" -le "$RED_AT" ];    then EXPIRY_COLOR="$RED"
+  elif [ "$LEFT" -le "$ORANGE_AT" ]; then EXPIRY_COLOR="$ORANGE"
   fi
 else
   EXPIRY_FMT="?"
@@ -254,16 +270,20 @@ if [ -n "$WEEK" ]; then
   LIMIT_SEG="${LIMIT_SEG:+$LIMIT_SEG | }$WK_SEG"
 fi
 
-# ---- Per-prompt cost multiplier (Sonnet low = 1x baseline) ----
-# Derived from the price table x an effort weight, so it tracks PRICES
-# automatically: each effort level costs roughly low 1x | medium 1.5x | high 2.5x |
-# xhigh 3.5x | max 4x of the same model's low. MULT is kept in tenths (x10) for
-# one-decimal formatting without floats; /3 normalizes to Sonnet's base price.
+# ---- Per-prompt cost multiplier (Opus low = 1x baseline) ----
+# Anchored to Opus low — the usual default driver — so 1x reads as "my normal" and
+# the number becomes a deviation signal: >1 means I'm spending more than usual this
+# turn, <1 means I'm economizing. (If your default isn't Opus low, change the 50
+# divisor below = baseline_model_price x baseline_effort_weight.) Derived from the
+# price table x an effort weight, so it tracks PRICES automatically: each effort
+# level costs roughly low 1x | medium 1.5x | high 2.5x | xhigh 3.5x | max 4x of the
+# same model's low. MULT is kept in tenths (x10) for one-decimal formatting without
+# floats; /50 (Opus price 5 x low weight 10) normalizes Opus low to 1.0x.
 case "$EFFORT" in
   low) W=10 ;; medium) W=15 ;; high) W=25 ;; xhigh) W=35 ;; max) W=40 ;; *) W=15 ;;
 esac
-MULT=$(( (PRICE * W * 10 + 15) / 30 ))
-MCOLOR=$(tier_color5 "$MULT" 11 26 46 68)
+MULT=$(( (PRICE * W * 10 + 25) / 50 ))
+MCOLOR=$(tier_color5 "$MULT" 13 26 41 61)
 if [ $((MULT % 10)) -eq 0 ]; then
   MULT_FMT="$((MULT / 10))x"
 else
