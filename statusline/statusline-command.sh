@@ -92,23 +92,20 @@ fmt_reset() {
 TOTAL=$((INP + CC + CR + OUT))
 TOKENS=$([ "$TOTAL" -ge 1000 ] && echo "$((TOTAL / 1000))k" || echo "$TOTAL")
 
-# Context thresholds from context_window_size alone — no model-id sniffing. The
-# split is by window, not model family. A 200k window rides close to the top
-# (30/60/80%) because auto-compact is the binding wall. A 1M window does NOT get a
-# proportionally larger budget: quality noticeably degrades past ~200k on every 1M
-# model (not just Sonnet), and each turn re-reads the whole window, so a big context
-# is both dumber and costlier. The 1M tiers are therefore tuned to a deliberate
-# working ceiling (~300k, never the full window): green tracks a healthy <100k,
-# orange nudges to compact at 160k, red means "at your ceiling, compact now" by
-# 260k. The cost half of this is also visible in the Δ segment.
-# Tiers: green = healthy, cyan = normal working range, orange = consider /compact
-# soon, red = compact now (auto-compact imminent or context bloat hurting quality).
-if [ "$CTX_SIZE" -ge 1000000 ]; then
-  CTX_T1=80000; CTX_T2=160000; CTX_T3=260000
-else
-  CTX_T1=60000; CTX_T2=120000; CTX_T3=160000
-fi
-TCOLOR_CTX=$(tier_color "$TOTAL" "$CTX_T1" "$CTX_T2" "$CTX_T3")
+# Context tiers measure what context size does to quality and per-turn cost, and
+# neither depends on the window — quality noticeably degrades past ~100-200k on
+# every model, and each request re-reads the whole window (at 160k that's real
+# money per tool call even at the 0.1x cache-read rate). So the health bands are
+# identical everywhere: green <60k = fresh (baseline prompt + early work, don't
+# think about context), cyan <100k = normal working range, yellow <130k = drifting
+# (start watching for a natural breakpoint), orange = compact at the next clean
+# stopping point. Only red is window-dependent, because only the wall differs:
+# 160k on a 200k window (auto-compact imminent — external constraint), 200k on a
+# 1M window (past the point every model handles well; the bigger window buys
+# headroom for the occasional overshoot, not a license to live there). The cost
+# half of this is also visible in the Δ segment.
+CTX_RED=$([ "$CTX_SIZE" -ge 1000000 ] && echo 200000 || echo 160000)
+TCOLOR_CTX=$(tier_color5 "$TOTAL" 60000 100000 130000 "$CTX_RED")
 
 # ---- Cost burn (Σ session, Δ current turn) ----
 # Hybrid sourcing. Σ prefers cost.total_cost_usd when present (API/enterprise
