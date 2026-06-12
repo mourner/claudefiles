@@ -5,8 +5,8 @@
   "description": "Claude Code efficiency tools: a PreToolUse guard hook and a cost/usage status line.",
   "license": "MIT",
   "scripts": {
-    "pretest": "eslint hooks/guard.mjs hooks/test/guard.test.mjs",
-    "test": "node --test 'hooks/test/*.test.mjs'"
+    "pretest": "eslint hooks/guard.mjs hooks/test/*.test.js statusline/test/*.test.js",
+    "test": "node --test"
   },
   "devDependencies": {
     "eslint": "^10.4.1",
