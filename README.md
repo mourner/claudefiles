@@ -1,13 +1,14 @@
-# @mourner/claudefiles
+# claudefiles
 
 Two small [Claude Code](https://claude.com/claude-code) efficiency tools:
 
-- **statusline** — a cost & context-efficiency status line. A standalone bash script
-  (plugins can't ship a `statusLine`, so this one installs via a settings snippet).
+- **statusline** — a cost & context-efficiency status line, a standalone bash script.
 - **guard** — a `PreToolUse` hook that blocks context-wasting tool calls and nudges
-  toward scoped alternatives. Shipped as an installable plugin.
+  toward scoped alternatives.
 
-Both work unmodified across Pro/Max seat, enterprise, and API-key billing.
+Both work unmodified across Pro/Max seat, enterprise, and API-key billing. The guard
+ships as the installable `claudefiles` plugin (with more tooling to come); statusline
+installs via a one-line settings snippet, since plugins can't ship a `statusLine`.
 
 ## statusline
 
