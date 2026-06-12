@@ -136,17 +136,10 @@
     "expect": "allow"
   },
   {
-    "name": "GUARD_EXTRA_EXT=py makes cat of a .py file deny",
+    "name": "cat of a .py file is denied (Python is gated too)",
     "tool_name": "Bash",
     "tool_input": {"command": "cat foo.py"},
-    "env": {"GUARD_EXTRA_EXT": "py"},
     "expect": "deny",
     "denyMatch": "Read tool"
-  },
-  {
-    "name": "without GUARD_EXTRA_EXT, cat of a .py file is allowed",
-    "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.py"},
-    "expect": "allow"
   }
 ]

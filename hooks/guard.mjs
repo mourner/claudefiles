@@ -18,32 +18,20 @@
 //   - block fetching a GitHub issue/PR/blob page (noisy rendered HTML) — use the gh CLI instead
 // LSP (dormant — plugin disabled by default, fires only if re-enabled):
 //   - hard-deny `workspaceSymbol`; deny `documentSymbol` on a large file
-//
-// Configuration (optional env vars; defaults preserve the behavior above exactly):
-//   - GUARD_MAX_KB     size gate in KB for whole-file reads/dumps (number, default 16)
-//   - GUARD_EXTRA_EXT  comma-separated extensions appended to the gated list (e.g. `py,go,rs`)
 
 import {existsSync, readFileSync, statSync} from 'fs';
 import {fileURLToPath} from 'url';
 
 // Block threshold in bytes. Bytes track context tokens (~4 chars/token) far better than line count,
-// which a verbose line or a minified one-liner both defeat. The 16 KB default leaves the typical
-// 3–4 KB module untouched and gates only the long tail where you almost always want a slice.
-// Override with GUARD_MAX_KB (a non-positive or unparseable value falls back to the 16 KB default).
-// MAX_BYTES and GATED_EXT are populated by configure(env) at the start of every decide() call, so a
-// per-invocation environment (and the test suite) is honored without reloading the module.
-let MAX_BYTES, GATED_EXT;
-function configure(env) {
-    const maxKb = Number(env.GUARD_MAX_KB);
-    MAX_BYTES = (Number.isFinite(maxKb) && maxKb > 0 ? maxKb : 16) * 1024;
-    // Extensions whose unscoped whole-file read wastes context: source code, plus JSON/GeoJSON
-    // fixtures. `.md/.log/.csv/…` stay exempt — you usually do want the whole doc. GUARD_EXTRA_EXT
-    // (comma-separated, with or without leading dots) appends more, e.g. `py,go,rs`.
-    const extra = (env.GUARD_EXTRA_EXT ?? '')
-        .split(',').map(e => e.trim().replace(/^\./, '')).filter(e => /^\w+$/.test(e));
-    GATED_EXT = new RegExp(
-        `\\.(ts|tsx|js|jsx|mjs|cjs|json|geojson${extra.length ? `|${extra.join('|')}` : ''})$`, 'i');
-}
+// which a verbose line or a minified one-liner both defeat. 16 KB leaves the typical 3–4 KB module
+// untouched and gates only the long tail where you almost always want a slice. Edit it here if your
+// codebase wants a different ceiling.
+const MAX_BYTES = 16 * 1024;
+
+// Extensions whose unscoped whole-file read wastes context: source code across common languages,
+// plus JSON/GeoJSON fixtures. Prose and data files (`.md/.txt/.log/.csv/.yaml/…`) stay exempt —
+// you usually do want the whole document. Add or remove extensions here as needed.
+const GATED_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|json|geojson|py|pyi|rb|go|rs|java|kt|kts|c|h|cc|cpp|cxx|hpp|hh|cs|php|swift|scala|clj|cljs|ex|exs|erl|hs|ml|lua|r|jl|dart|vue|svelte|sh|bash|zsh|sql|pl|pm|groovy|gradle|proto)$/i;
 
 // A deny is thrown (not written) so the checks can bail from deep in the call stack; decide() catches
 // it and returns the reason, while any *other* throw falls through to allow (fail-open).
@@ -346,10 +334,8 @@ function checkLsp(input) {
 
 // Pure entry point: given a hook payload, return the deny reason string, or null to allow. Fail-open
 // — a Deny thrown by a check becomes its reason; any other throw (bad input, stat error, check bug)
-// falls through to allow. Exported so the test suite can exercise the logic in-process. `env`
-// defaults to process.env; tests pass a per-case env to drive GUARD_MAX_KB / GUARD_EXTRA_EXT.
-export function decide({tool_name: toolName, tool_input: toolInput} = {}, env = process.env) {
-    configure(env);
+// falls through to allow. Exported so the test suite can exercise the logic in-process.
+export function decide({tool_name: toolName, tool_input: toolInput} = {}) {
     const input = toolInput ?? {};
     try {
         if (toolName === 'Bash') checkBash(input);

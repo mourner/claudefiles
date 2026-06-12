@@ -49,17 +49,20 @@ Add to `settings.json`:
   "statusLine": {
     "type": "command",
     "command": "bash ~/path/to/claudefiles/statusline/statusline-command.sh",
-    "refreshInterval": 5 // optional
+    "refreshInterval": 5
   }
 }
 ```
 
 ## guard
 
-A single [`hooks/guard.mjs`](hooks/guard.mjs) dispatched on `Read`, `Bash`, `WebFetch`,
-and `LSP`. It denies a call (with a one-line reason pointing at the better tool) when it
-sees a pattern that needlessly burns context, and fails **open** on anything ambiguous —
-any parse error, unreadable file, or unexpected throw allows the call through.
+A single [`hooks/guard.mjs`](hooks/guard.mjs) that runs before every `Read`, `Bash`,
+`WebFetch`, and `LSP` call. When it recognizes a pattern that needlessly burns context, it
+blocks the call and returns a one-line reason pointing at the better tool.
+
+It only blocks patterns it's sure about. Anything it can't parse, a file it can't read, or
+an unexpected error all let the call through — the guard never blocks a call it doesn't
+understand, so a bug in it can't bring your work to a halt.
 
 ### What it blocks
 
@@ -72,18 +75,12 @@ any parse error, unreadable file, or unexpected throw allows the call through.
 | Bash | reading gated files in a `for`/`while` loop | Same — dumps each match whole. |
 | Bash | `git show <ref>:<path>` of a large file | Dumps the whole file. Read the part you need. |
 | Bash | two-dot `git diff A..B` | Compares endpoints, folding in unrelated changes. Use three-dot `A...B` (from the merge-base). |
-| Read | a code/JSON file over the size gate, with no `limit` | Pulls the whole file. Pass a `limit` to scope the read. |
+| Read | a code/JSON file over 16 KB, with no `limit` | Pulls the whole file. Pass a `limit` to scope the read. |
 | WebFetch | a GitHub issue/PR/blob page | Noisy rendered HTML. Use the `gh` CLI or `raw.githubusercontent.com`. |
 | LSP | `workspaceSymbol`, or `documentSymbol` on a large file | Dumps the whole symbol table/tree. Use `grep`/`findReferences`. (Dormant unless an LSP plugin is enabled.) |
 
-### Configuration
-
-Two optional environment variables (defaults preserve the behavior above exactly):
-
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `GUARD_MAX_KB` | `16` | Size gate (KB) for whole-file reads/dumps. |
-| `GUARD_EXTRA_EXT` | — | Comma-separated extensions appended to the gated list, e.g. `py,go,rs`. |
+The 16 KB size gate and the list of gated extensions are constants at the top of
+[`hooks/guard.mjs`](hooks/guard.mjs) — edit them there if your codebase wants different limits.
 
 ### Install (plugin)
 
@@ -91,8 +88,6 @@ Two optional environment variables (defaults preserve the behavior above exactly
 /plugin marketplace add mourner/claudefiles
 /plugin install claudefiles@claudefiles
 ```
-
-To set `GUARD_MAX_KB` / `GUARD_EXTRA_EXT`, export them in the environment Claude Code runs in.
 
 ### Install (manual hook)
 
@@ -114,5 +109,5 @@ If you'd rather not use the plugin, point a `PreToolUse` hook at the script dire
 }
 ```
 
-A machine-wide guard composes with per-repo `.claude/hooks/guard.mjs` hooks: Claude Code
-runs every matching hook and blocks if any one denies.
+This machine-wide guard stacks with any per-repo `.claude/hooks/guard.mjs`: Claude Code runs
+every matching hook on a call and blocks it if any one of them does.

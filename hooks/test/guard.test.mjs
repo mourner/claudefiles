@@ -3,7 +3,7 @@
 // cases at the end exercise the CLI wrapper itself: the stdin→stdout JSON contract a PreToolUse hook
 // actually uses, and the malformed-stdin fail-open path that only the wrapper has.
 //
-// Each case in cases.json is {name, tool_name, tool_input, expect: "allow"|"deny", denyMatch?, env?}.
+// Each case in cases.json is {name, tool_name, tool_input, expect: "allow"|"deny", denyMatch?}.
 // decide() returns the deny reason string, or null to allow. Cases reference fixture files
 // (foo.json, big.ts, src/, …) created in a temp dir; the test chdir's into it so the guard's
 // existsSync/statSync checks resolve against the fixtures.
@@ -25,7 +25,7 @@ let fixtures, cwd0;
 
 before(() => {
     fixtures = mkdtempSync(join(tmpdir(), 'guard-test-'));
-    // Small existing files of gated/extra extensions.
+    // Small existing files of gated extensions.
     writeFileSync(join(fixtures, 'foo.json'), '{"x":1}\n');
     writeFileSync(join(fixtures, 'foo.ts'), 'export const x = 1;\n');
     writeFileSync(join(fixtures, 'foo.py'), 'x = 1\n');
@@ -47,7 +47,7 @@ after(() => {
 
 for (const c of cases) {
     test(c.name, () => {
-        const reason = decide({tool_name: c.tool_name, tool_input: c.tool_input}, {...process.env, ...(c.env ?? {})});
+        const reason = decide({tool_name: c.tool_name, tool_input: c.tool_input});
         if (c.expect === 'deny') {
             assert.ok(reason != null, 'expected a deny, got allow');
             if (c.denyMatch) assert.ok(reason.includes(c.denyMatch), `deny reason missing "${c.denyMatch}": ${reason}`);
@@ -59,22 +59,22 @@ for (const c of cases) {
 
 // ── CLI wrapper contract (spawned) ───────────────────────────────────────────────────────────────
 
-function runCli(stdin, env) {
-    return spawnSync('node', [GUARD], {input: stdin, cwd: fixtures, env: {...process.env, ...env}, encoding: 'utf8'}).stdout ?? '';
+function runCli(stdin) {
+    return spawnSync('node', [GUARD], {input: stdin, cwd: fixtures, encoding: 'utf8'}).stdout ?? '';
 }
 
 test('CLI: a deny writes the hook decision JSON to stdout', () => {
-    const out = runCli(JSON.stringify({tool_name: 'Bash', tool_input: {command: 'cat foo.json'}}), {});
+    const out = runCli(JSON.stringify({tool_name: 'Bash', tool_input: {command: 'cat foo.json'}}));
     assert.match(out, /"permissionDecision":"deny"/);
     assert.match(out, /Read tool/);
 });
 
 test('CLI: an allow writes nothing', () => {
-    const out = runCli(JSON.stringify({tool_name: 'Bash', tool_input: {command: 'ls'}}), {});
+    const out = runCli(JSON.stringify({tool_name: 'Bash', tool_input: {command: 'ls'}}));
     assert.equal(out, '');
 });
 
 test('CLI: malformed JSON on stdin fails open (no output)', () => {
-    const out = runCli('this is not json {', {});
+    const out = runCli('this is not json {');
     assert.equal(out, '');
 });
