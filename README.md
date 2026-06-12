@@ -9,8 +9,6 @@ Two small [Claude Code](https://claude.com/claude-code) efficiency tools:
 
 Both work unmodified across Pro/Max seat, enterprise, and API-key billing.
 
----
-
 ## statusline
 
 [`statusline/statusline-command.sh`](statusline/statusline-command.sh) — a cost & context
@@ -18,8 +16,7 @@ dashboard. Example:
 
 ![Fable 1M medium 3x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | claudefiles](statusline.png)
 
-Segments are spaced within a group and joined by ` | ` between groups, so the line reads
-as a few chunks rather than a flat row of fields:
+Reading left to right:
 
 | Group | Segment | Meaning |
 | --- | --- | --- |
@@ -72,7 +69,7 @@ understand, so a bug in it can't bring your work to a halt.
 | Bash | `cat`/`sed`/`awk`/`head`/`tail` of a code/JSON file | Use the Read tool — Edit needs a prior Read, so a `cat` only forces a duplicate read later. |
 | Bash | a `grep`/read at a path that doesn't exist | A blind guess. `find`/`ls` to locate it first. |
 | Bash | `find … -exec cat {}` | Dumps every matched file whole. Read the ones you need. |
-| Bash | reading gated files in a `for`/`while` loop | Same — dumps each match whole. |
+| Bash | reading gated files in a `for`/`while` loop | Dumps each matched file whole. Read the ones you need. |
 | Bash | `git show <ref>:<path>` of a large file | Dumps the whole file. Read the part you need. |
 | Bash | two-dot `git diff A..B` | Compares endpoints, folding in unrelated changes. Use three-dot `A...B` (from the merge-base). |
 | Read | a code/JSON file over 16 KB, with no `limit` | Pulls the whole file. Pass a `limit` to scope the read. |
