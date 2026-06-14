@@ -6,9 +6,8 @@ Two small [Claude Code](https://claude.com/claude-code) efficiency tools:
 - **guard** — a `PreToolUse` hook that blocks context-wasting tool calls and nudges
   toward scoped alternatives.
 
-Both work unmodified across Pro/Max seat, enterprise, and API-key billing. The guard
-ships as the installable `claudefiles` plugin (with more tooling to come); statusline
-installs via a one-line settings snippet, since plugins can't ship a `statusLine`.
+The guard ships as the installable `claudefiles` plugin (with more tooling to come);
+statusline installs via a one-line settings snippet, since plugins can't ship a `statusLine`.
 
 ## statusline
 
@@ -32,24 +31,20 @@ Reading left to right:
 | | `❄4m` | time left before the prompt cache expires — past it, the next turn pays full price to rebuild it instead of the 0.1x cached read |
 | cwd | `claudefiles` | working directory |
 
-Costs come from the session transcript at public **API list prices** — on a flat-rate seat
-the dollar figures are notional, not what you're billed. The prompt-cache TTL is detected
-from actual usage.
+**Costs** come from the session transcript at public API list prices — on a flat-rate seat
+the dollar figures are *notional*, not what you're billed. They still track the *relative*
+weight of what you're doing — which turns are expensive, what a model or effort change costs —
+so they work as an efficiency signal even with no money on the line. The prompt-cache TTL is
+detected from actual usage.
 
-### Burn-rate pace (`⚠`)
+**Burn-rate pace** (`⚠1.4x`) is `used% ÷ elapsed%` for a limit's window: `1.0x` is dead on a
+linear budget line, so `1.4x` means you'll hit the wall before reset if you keep the pace.
+Each limit gets its own badge, and it stays hidden unless worth acting on — only above `1.1x`,
+and never in a window's first 10% (`PACE_WARN` / `PACE_FLOOR` in the script).
 
-The `⚠Nx` badge answers "am I on track to last until this limit resets?" without mental
-arithmetic. It's the ratio of how much you've **used** to how far through the window you
-**are**: `used% ÷ elapsed%`. `1.0x` is dead on a linear budget line, so `⚠1.4x` means
-you're burning 40% faster than sustainable and will hit the wall before reset if you keep
-the pace; under `1.0x` you're coasting.
-
-It stays hidden unless it's worth acting on — it appears only above `1.1x` (a small dead
-zone over the break-even so it doesn't flicker), and never in the first 10% of a window
-(too little elapsed time to extrapolate from). It's colored orange up to `1.5x`, red beyond.
-Each limit carries its own badge, since the 5-hour and weekly windows can be off-pace
-independently. The `1.1` threshold and `10%` floor are constants (`PACE_WARN` / `PACE_FLOOR`)
-in the script.
+**Colors** run green → cyan → orange → red across segments, signaling fine → worth a glance.
+The cost multiplier, rate limits, tokens, cache TTL, and pace badge each carry their own
+thresholds, so a red anywhere is the one thing to look at.
 
 Requires `bash` and `jq`.
 
