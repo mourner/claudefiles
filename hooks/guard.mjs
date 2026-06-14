@@ -65,6 +65,17 @@ const GREP = new Set(['grep', 'rg', 'egrep', 'fgrep']);
 const RANGE_READ = new Set(['cat', 'sed', 'awk', 'head', 'tail']);
 const PAGER = new Set(['less', 'more']);
 
+// Shared regexes, kept at module scope so they compile once rather than on every guard call.
+const GREP_FILTER_FLAG = /^(--include|--exclude|-g)(=|$)/; // a scoping flag → grep is already bounded
+const SHELL_EXPANSION = /[*?[\]{}$~`]/;                    // glob/$var/~/command-subst → not a static literal
+const SED_INPLACE = /^-i/;                                 // `sed -i`/`-i.bak` → an edit, not a read
+const REDIRECT = /[^<]>|^>/;                               // a bare `>`/`>>` output redirect (not `<<EOF`)
+const GIT_DIFF_RANGE = /^([\w@~^/.-]+)\.\.([\w@~^/.-]+)$/; // two-dot `A..B` ref range
+const HEREDOC_OPEN = /<<-?\s*['"]?(\w+)['"]?/;             // heredoc opener, capturing the delimiter
+const SEGMENT_SPLIT = /&&|\|\||;|\n/;                      // shell command separators
+const WHITESPACE = /\s+/;
+const DIGITS = /^\d+$/;
+
 const isSymbol = tok => typeof tok === 'string' && tok.length >= 4 && !ALLOWLIST.test(tok) && SYMBOL.some(rx => rx.test(tok));
 
 const unquote = s => s.length >= 2 && (s[0] === '"' || s[0] === '\'') && s.at(-1) === s[0] ? s.slice(1, -1) : s;
@@ -85,7 +96,7 @@ function checkGrep(tokens) {
 
     const positionals = [];
     for (const t of tokens.slice(gi + 1)) {
-        if (/^(--include|--exclude|-g)(=|$)/.test(t)) return; // a filter flag → already scoped
+        if (GREP_FILTER_FLAG.test(t)) return; // a filter flag → already scoped
         if (!t.startsWith('-')) positionals.push(unquote(t)); // skip other flags
     }
     const pattern = positionals[0];
@@ -98,7 +109,7 @@ function checkGrep(tokens) {
         // exist. That's a guaranteed-empty path-guess; one `find` to learn the layout beats
         // flailing greps. Tokens the shell would expand (globs, $vars, ~, command subst) can't be
         // resolved statically, so they don't count as literal — we fail open on those.
-        const literal = paths.filter(p => !/[*?[\]{}$~`]/.test(p));
+        const literal = paths.filter(p => !SHELL_EXPANSION.test(p));
         if (literal.length === paths.length && literal.every(p => !existsSync(p))) {
             deny(`No such path: ${literal.join(', ')}. Use \`find\` to find the layout first.`);
         }
@@ -123,17 +134,17 @@ function checkRangeRead(tokens) {
     const target = tokens.slice(1).map(unquote).find(t => GATED_EXT.test(t));
     if (!target) return;
     // `sed -i`/`-i.bak`/`--in-place`, `gawk -i inplace` are edits, not reads — let them through.
-    if (tokens.some(t => /^-i/.test(t) || t === '--in-place')) return;
+    if (tokens.some(t => SED_INPLACE.test(t) || t === '--in-place')) return;
     // A redirect (`>`/`>>`) or heredoc (`<<EOF`) means output goes to a file / is a heredoc body,
     // not into context — outside this guard's charter (and the matched path is the write target).
     // Catch redirects with no surrounding spaces too (`cat a.json>out`): any unquoted `>` not part
     // of a `<>`/`2>`-style construct still redirects output. `/[^<]>|^>/` matches a bare `>` token,
     // a `foo>bar` token, and `>>`, while skipping a lone `<<EOF`.
-    if (tokens.some(t => t.startsWith('<<') || /[^<]>|^>/.test(t))) return;
+    if (tokens.some(t => t.startsWith('<<') || REDIRECT.test(t))) return;
     // A literal path that doesn't exist is a guess — point at `find`, like checkGrep does. Tokens
     // the shell would expand (globs, $vars, ~, command subst) can't be resolved statically, so we
     // skip them and fall through to the Read nudge.
-    if (!/[*?[\]{}$~`]/.test(target) && !existsSync(target)) {
+    if (!SHELL_EXPANSION.test(target) && !existsSync(target)) {
         deny(`No such path: ${target}. Use \`find\`/\`ls\` to locate it first.`);
     }
     deny(`Use the Read tool (\`offset\`+\`limit\`) to read, not \`${cmd}\`.`);
@@ -191,7 +202,7 @@ function checkGitDiff(tokens) {
         if (tok.startsWith('-')) continue; // flag
         const t = unquote(tok);
         if (!t.includes('..') || t.includes('...')) continue; // only bare two-dot ranges
-        const m = t.match(/^([\w@~^/.-]+)\.\.([\w@~^/.-]+)$/);
+        const m = t.match(GIT_DIFF_RANGE);
         if (!m || m[1].endsWith('/') || m[2].startsWith('/')) continue; // looks like a path, not a ref range
         deny(`\`git diff ${t}\` compares endpoints (= \`git diff ${m[1]} ${m[2]}\`); if ${m[1]} has ` +
             `advanced it folds in ${m[1]}-only changes. For what this branch changed, use three dots: ` +
@@ -211,7 +222,7 @@ function stripHeredocs(cmd) {
             if (line.trim() === delim) delim = null; // closing line — drop it too
             continue;
         }
-        const m = line.match(/<<-?\s*['"]?(\w+)['"]?/);
+        const m = line.match(HEREDOC_OPEN);
         if (m) delim = m[1];
         out.push(line);
     }
@@ -228,8 +239,8 @@ function checkBash(input) {
     // shell keywords, and run each check on the segment's first pipe stage (only that stage touches
     // disk; later stages filter stdout). Best-effort: a separator inside quotes may mis-split, which
     // only ever makes us fail open.
-    const segments = cmd.split(/&&|\|\||;|\n/);
-    const segTokens = segments.map(s => stripLead(s.split('|')[0].split(/\s+/).filter(Boolean)));
+    const segments = cmd.split(SEGMENT_SPLIT);
+    const segTokens = segments.map(s => stripLead(s.split('|')[0].split(WHITESPACE).filter(Boolean)));
 
     for (let i = 0; i < segments.length; i++) {
         const tokens = segTokens[i];
@@ -243,7 +254,7 @@ function checkBash(input) {
         // offset+limit — so keep the range-read check on. git show stays exempt on any pipe (its
         // own check treats a downstream `sed -n` as a scoped inspect).
         const downstreamDumps = piped && stages.slice(1).every((s) => {
-            const c = stripLead(s.trim().split(/\s+/).filter(Boolean))[0];
+            const c = stripLead(s.trim().split(WHITESPACE).filter(Boolean))[0];
             return RANGE_READ.has(c) || PAGER.has(c);
         });
         if (!piped || downstreamDumps) checkRangeRead(tokens);
@@ -297,7 +308,7 @@ function checkWebFetch(input) {
     if (!owner || !repo || !kind) return;
     const slug = `${owner}/${repo}`;
 
-    if ((kind === 'issues' || kind === 'pull') && /^\d+$/.test(rest[0])) {
+    if ((kind === 'issues' || kind === 'pull') && DIGITS.test(rest[0])) {
         const sub = kind === 'pull' ? 'pr' : 'issue';
         const label = kind === 'pull' ? 'PR' : 'issue';
         deny(`Fetching a GitHub ${label} page pulls noisy rendered HTML. Use the gh CLI for clean JSON: ` +
