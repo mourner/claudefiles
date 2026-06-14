@@ -25,6 +25,7 @@ Reading left to right:
 | | `3x` | roughly how much this model+effort costs per prompt, relative to Opus at low effort (the 1x baseline) |
 | limits | `5h:16% ↺2h` | 5-hour rate limit: used, and time until it resets (only when the account reports it) |
 | | `7d:2% ↺3d` | weekly rate limit: used, and time until it resets |
+| | `⚠1.4x` | burn-rate pace — appears next to a limit only when you're spending too fast to last until its reset (see below) |
 | cost | `Δ10¢` | this turn's cost — starts at zero each prompt and climbs as the turn runs |
 | | `Σ$14.90` | session cost so far |
 | context | `169k` | context tokens in use |
@@ -34,6 +35,21 @@ Reading left to right:
 Costs come from the session transcript at public **API list prices** — on a flat-rate seat
 the dollar figures are notional, not what you're billed. The prompt-cache TTL is detected
 from actual usage.
+
+### Burn-rate pace (`⚠`)
+
+The `⚠Nx` badge answers "am I on track to last until this limit resets?" without mental
+arithmetic. It's the ratio of how much you've **used** to how far through the window you
+**are**: `used% ÷ elapsed%`. `1.0x` is dead on a linear budget line, so `⚠1.4x` means
+you're burning 40% faster than sustainable and will hit the wall before reset if you keep
+the pace; under `1.0x` you're coasting.
+
+It stays hidden unless it's worth acting on — it appears only above `1.1x` (a small dead
+zone over the break-even so it doesn't flicker), and never in the first 10% of a window
+(too little elapsed time to extrapolate from). It's colored orange up to `1.5x`, red beyond.
+Each limit carries its own badge, since the 5-hour and weekly windows can be off-pace
+independently. The `1.1` threshold and `10%` floor are constants (`PACE_WARN` / `PACE_FLOOR`)
+in the script.
 
 Requires `bash` and `jq`.
 

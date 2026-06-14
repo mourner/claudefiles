@@ -86,6 +86,26 @@ fmt_reset() {
   fi
 }
 
+# Burn-rate pace vs a linear budget line: used% / (% of window elapsed). 1.0 = dead
+# on the line, >1 = burning too fast (will hit the limit before reset), <1 = coasting.
+# Args: used%, reset-epoch, window-seconds. Echoes pace x10 (integer) only when it's
+# worth flagging — i.e. you're meaningfully over the line (>= PACE_WARN tenths) AND
+# far enough into the window for the extrapolation to mean anything (>= PACE_FLOOR of
+# it elapsed; early on, a tiny elapsed makes pace explode for no reason). Echoes ""
+# otherwise (coasting, no reset, window not started, past reset, or too early).
+PACE_WARN=11   # 1.1x — small dead zone above the 1.0 break-even so it doesn't flap
+PACE_FLOOR=10  # ignore the first 10% of the window
+fmt_pace() {
+  [ -z "$1" ] || [ -z "$2" ] && { echo ""; return; }
+  local used="$1" elapsed=$(( $3 - ($2 - $(date +%s)) ))
+  [ "$elapsed" -le $(( $3 * PACE_FLOOR / 100 )) ] && { echo ""; return; }
+  # pace = used / (elapsed/window * 100); x10 for one-decimal formatting w/o floats,
+  # rounded to nearest tenth (+half-denominator before the divide)
+  local p=$(( (used * $3 + elapsed * 5) / (elapsed * 10) ))
+  [ "$p" -lt "$PACE_WARN" ] && { echo ""; return; }
+  echo "$p"
+}
+
 # ---- Context tokens ----
 # Context display includes output_tokens (the last response occupies the window on
 # the next request).
@@ -257,13 +277,17 @@ if [ -n "$FIVE_H" ]; then
   FH_INT=$(printf '%.0f' "$FIVE_H")
   FH_COLOR=$(tier_color "$FH_INT" 50 75 90)
   FH_R=$(fmt_reset "$FIVE_H_RESET")
-  LIMIT_SEG="5h:${FH_COLOR}${FH_INT}%${RESET}${FH_R:+ ↺$FH_R}"
+  FH_P=$(fmt_pace "$FH_INT" "$FIVE_H_RESET" 18000)
+  FH_PF=""; [ -n "$FH_P" ] && { PC=$([ "$FH_P" -lt 15 ] && echo "$ORANGE" || echo "$RED"); FH_PF=" ${PC}⚠$((FH_P / 10)).$((FH_P % 10))x${RESET}"; }
+  LIMIT_SEG="5h:${FH_COLOR}${FH_INT}%${RESET}${FH_R:+ ↺$FH_R}${FH_PF}"
 fi
 if [ -n "$WEEK" ]; then
   WK_INT=$(printf '%.0f' "$WEEK")
   WK_COLOR=$(tier_color "$WK_INT" 50 75 90)
   WK_R=$(fmt_reset "$WEEK_RESET")
-  WK_SEG="7d:${WK_COLOR}${WK_INT}%${RESET}${WK_R:+ ↺$WK_R}"
+  WK_P=$(fmt_pace "$WK_INT" "$WEEK_RESET" 604800)
+  WK_PF=""; [ -n "$WK_P" ] && { PC=$([ "$WK_P" -lt 15 ] && echo "$ORANGE" || echo "$RED"); WK_PF=" ${PC}⚠$((WK_P / 10)).$((WK_P % 10))x${RESET}"; }
+  WK_SEG="7d:${WK_COLOR}${WK_INT}%${RESET}${WK_R:+ ↺$WK_R}${WK_PF}"
   LIMIT_SEG="${LIMIT_SEG:+$LIMIT_SEG | }$WK_SEG"
 fi
 
