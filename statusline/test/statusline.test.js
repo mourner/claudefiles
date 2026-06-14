@@ -55,6 +55,15 @@ test('statusline formats context tokens in thousands', () => {
     assert.match(line, /\b169k\b/, line);
 });
 
+test('statusline hides the context group until the session has token usage', () => {
+    const before = render(status({context_window: {context_window_size: 200000, current_usage: {}}}));
+    assert.ok(!/❄/.test(before), before);
+
+    const after = render(status({context_window: {context_window_size: 200000, current_usage: {input_tokens: 12000}}}));
+    assert.match(after, /❄/, after);
+    assert.match(after, /\b12k\b/, after);
+});
+
 test('statusline rate-limit segments render only when the account reports them', () => {
     const without = render(status());
     assert.ok(!/\b5h:/.test(without), without);

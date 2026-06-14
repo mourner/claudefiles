@@ -318,8 +318,11 @@ MODEL_GRP="$MODEL_GRP ${MCOLOR}${MULT_FMT}${RESET}"
 COST_GRP=""
 [ "$BURN_SESS_M" -gt 0 ] && COST_GRP="Δ${DCOLOR}${BURN_TURN_FMT}${RESET} Σ${SCOLOR}${BURN_SESS_FMT}${RESET}"
 
-# Context group: tokens, cache countdown.
-CTX_GRP="${TCOLOR_CTX}${TOKENS}${RESET} ❄${EXPIRY_COLOR}${EXPIRY_FMT}${RESET}"
+# Context group: tokens, cache countdown. Suppressed until the session has actual
+# usage — before the first response TOTAL is 0 and the cache TTL is still unknown,
+# so the pair would read "0 ❄5m"/"0 ❄?"; better to show nothing than a placeholder.
+CTX_GRP=""
+[ "$TOTAL" -gt 0 ] && CTX_GRP="${TCOLOR_CTX}${TOKENS}${RESET} ❄${EXPIRY_COLOR}${EXPIRY_FMT}${RESET}"
 
 # Join non-empty groups with ` | `.
 LINE="$MODEL_GRP"
