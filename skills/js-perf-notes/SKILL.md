@@ -1,6 +1,6 @@
 ---
 name: js-perf-notes
-description: Optimizing CPU-bound JS/TS — hot loops, algorithms, data structures, parsers, numeric/graphics code: profiling, V8-level technique, noise-robust benchmarking. Computation only — not browser/framework perf (DOM, React, page-load).
+description: Optimize, speed up, profile, benchmark, or investigate CPU-bound JS/TS performance regressions in hot loops, algorithms, data structures, parsers, numeric/graphics code. Covers V8-level technique and noise-robust measurement; not browser/framework perf (DOM, React, page-load).
 ---
 
 # JavaScript performance optimization — transferable principles
@@ -119,9 +119,10 @@ How to actually get the profile and confirm hypotheses, headlessly.
 
 - **Primary tool: `flamebearer`** — summarizes Chrome DevTools traces
   (`.json` / `.json.gz`) and Node `.cpuprofile` files as a compact text report:
-  top self-time functions per thread, long tasks, category breakdown. Install
-  once: `npm install -g flamebearer` (provides the `flamebearer` and
-  `flamebearer-node` commands).
+  top self-time functions per thread, long tasks, category breakdown. First
+  check whether `flamebearer` / `flamebearer-node` already exist or are provided
+  by repo-local tooling; only install them with user approval if needed
+  (`npm install -g flamebearer`).
 
   ```bash
   flamebearer-node bench.js            # profile a script + report in one step
@@ -278,8 +279,8 @@ decides whether the hot loop runs from cache or from memory.
 ## 7. Bulk operations instead of element-by-element
 
 - When source and destination layouts match, a single bulk copy
-  (`dst.set(src.subarray(a, b))`, `Array.prototype.copyWithin`, spreading a slice)
-  beats a per-element loop and lets the engine use an optimized path.
+  (`dst.set(src.subarray(a, b))`, `Array.prototype.copyWithin`) beats a
+  per-element loop and lets the engine use an optimized path.
 - Provide a **fast path**: detect the common case where a cheap bulk operation
   applies, and fall back to the element loop only when it doesn't.
 - Built-in range ops (`typedArray.fill(v, start, end)`) beat hand-written loops.
