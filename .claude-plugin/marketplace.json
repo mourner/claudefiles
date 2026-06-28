@@ -8,7 +8,7 @@
     {
       "name": "claudefiles",
       "source": ".",
-      "description": "Efficiency kit: a guard hook that blocks context-wasting tool calls and nudges toward scoped alternatives."
+      "description": "Efficiency kit: a guard hook that blocks context-wasting tool calls, and a skill of transferable JS/V8 performance-optimization principles."
     }
   ]
 }

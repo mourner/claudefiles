@@ -1,12 +1,14 @@
 # claudefiles
 
-Two small [Claude Code](https://claude.com/claude-code) efficiency tools:
+A few small [Claude Code](https://claude.com/claude-code) efficiency tools:
 
 - **statusline** — a cost & context-efficiency status line, a standalone bash script.
 - **guard** — a `PreToolUse` hook that blocks context-wasting tool calls and nudges
   toward scoped alternatives.
+- **js-perf-notes** — a skill: a reference of transferable JavaScript/V8 performance
+  optimization principles, auto-consulted when profiling or optimizing hot code.
 
-The guard ships as the installable `claudefiles` plugin (with more tooling to come);
+The guard and skill ship as the installable `claudefiles` plugin (with more tooling to come);
 statusline installs via a one-line settings snippet, since plugins can't ship a `statusLine`.
 
 ## statusline
@@ -119,3 +121,25 @@ If you'd rather not use the plugin, point a `PreToolUse` hook at the script dire
 
 This machine-wide guard stacks with any per-repo `.claude/hooks/guard.mjs`: Claude Code runs
 every matching hook on a call and blocks it if any one of them does.
+
+## js-perf-notes (skill)
+
+[`skills/js-perf-notes/SKILL.md`](skills/js-perf-notes/SKILL.md) — a distilled,
+project-agnostic reference of JavaScript/V8 performance-optimization principles: a profiling
+loop, the headless tooling (`flamebearer`, `--trace-deopt`), V8 specifics (inlining budgets,
+SMI range, hidden classes, cache/memory layout), benchmarking against noise, and how to report
+results honestly. It's a *reference to consult*, not a workflow to run — Claude pulls it in on
+its own when a task is about profiling or optimizing hot code.
+
+### Install (plugin)
+
+Ships with the `claudefiles` plugin (see the guard install above) — no extra step.
+
+### Install (manual symlink)
+
+If you'd rather not use the plugin, symlink the skill into your personal skills directory:
+
+```
+mkdir -p ~/.claude/skills
+ln -s ~/path/to/claudefiles/skills/js-perf-notes ~/.claude/skills/js-perf-notes
+```

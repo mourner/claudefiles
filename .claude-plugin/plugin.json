@@ -1,7 +1,7 @@
 {
   "name": "claudefiles",
   "version": "0.1.0",
-  "description": "Volodymyr Agafonkin's Claude Code efficiency kit: a PreToolUse guard hook that blocks context-wasting tool calls, plus related tooling.",
+  "description": "Volodymyr Agafonkin's Claude Code efficiency kit: a PreToolUse guard hook that blocks context-wasting tool calls, and a JS/V8 performance-optimization skill, plus related tooling.",
   "author": {
     "name": "Volodymyr Agafonkin"
   },
