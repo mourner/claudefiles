@@ -86,6 +86,18 @@ test('statusline shows the limit reset hint after a space, limits joined by a pi
     assert.match(line, /5h:16% ↺2h \| 7d:2% ↺3d/);
 });
 
+test('statusline zeroes a rate limit once its reset deadline has passed (stale rollover)', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const line = render(status({
+        rate_limits: {
+            five_hour: {used_percentage: 101, resets_at: now - 60},
+            seven_day: {used_percentage: 2, resets_at: now + 3 * 86400 + 60},
+        },
+    }));
+    assert.match(line, /5h:0%/);
+    assert.ok(!line.includes('101%'), line);
+});
+
 test('statusline session cost uses total_cost_usd when present', () => {
     const line = render(status({cost: {total_cost_usd: 14.9}}));
     assert.ok(line.includes('Σ$14.90'), line);

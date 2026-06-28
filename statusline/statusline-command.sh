@@ -272,9 +272,18 @@ fi
 # hint follows after a space, and the two limits are joined by ` | ` (same separator
 # as between groups) so the hierarchy is unambiguous: pipe between limits, space
 # within a limit.
+# A window that has reached its reset deadline has rolled over, but the server-
+# reported used_percentage stays stale until the next prompt regenerates this
+# payload — so a deadline now in the past means usage is effectively back to 0.
+# Zero it here so we don't keep showing a maxed-out percentage after the countdown
+# has already hit 0. Echoes the original percentage, or 0 if the reset has passed.
+reset_aware_pct() {  # args: percentage, reset-epoch
+  if [ -n "$2" ] && [ "$2" -le "$(date +%s)" ] 2>/dev/null; then echo 0; else echo "$1"; fi
+}
+
 LIMIT_SEG=""
 if [ -n "$FIVE_H" ]; then
-  FH_INT=$(printf '%.0f' "$FIVE_H")
+  FH_INT=$(reset_aware_pct "$(printf '%.0f' "$FIVE_H")" "$FIVE_H_RESET")
   FH_COLOR=$(tier_color "$FH_INT" 50 75 90)
   FH_R=$(fmt_reset "$FIVE_H_RESET")
   FH_P=$(fmt_pace "$FH_INT" "$FIVE_H_RESET" 18000)
@@ -282,7 +291,7 @@ if [ -n "$FIVE_H" ]; then
   LIMIT_SEG="5h:${FH_COLOR}${FH_INT}%${RESET}${FH_R:+ ↺$FH_R}${FH_PF}"
 fi
 if [ -n "$WEEK" ]; then
-  WK_INT=$(printf '%.0f' "$WEEK")
+  WK_INT=$(reset_aware_pct "$(printf '%.0f' "$WEEK")" "$WEEK_RESET")
   WK_COLOR=$(tier_color "$WK_INT" 50 75 90)
   WK_R=$(fmt_reset "$WEEK_RESET")
   WK_P=$(fmt_pace "$WK_INT" "$WEEK_RESET" 604800)
