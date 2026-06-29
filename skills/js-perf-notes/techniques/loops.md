@@ -24,8 +24,7 @@ flagged, not preemptively.
 
 - Micro-level rewrites (bit ops over arithmetic, `(x / n) | 0` over
   `Math.floor` for non-negative values below 2³¹, indexing a precomputed array
-  over recomputing) are real but small. Reach for them only inside a loop the
-  profiler actually flagged; elsewhere they just cost readability.
+  over recomputing) are real but small; elsewhere they just cost readability.
 - Watch for subtle semantic shifts when rewriting numeric or boundary logic
   (overflow, rounding, sign, off-by-one). `| 0` truncates toward zero where
   `Math.floor` rounds toward −∞, and wraps above 2³¹ — a faster line that

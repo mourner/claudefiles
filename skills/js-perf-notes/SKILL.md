@@ -20,10 +20,8 @@ the V8-level technique here won't move them. If the slowness is there, say so
 rather than misapplying these notes.
 
 This is a **reference to consult**, not a procedure to run start-to-finish —
-only "The loop" below is sequential; everything else is keyed by topic. The
-bottleneck-specific *techniques* live in on-demand files under `techniques/`
-(see the catalog index below). Principles are calibrated against V8; re-verify
-on other engines.
+only "The loop" below is sequential. Techniques live in on-demand files under
+`techniques/`; see the catalog below.
 
 ## The loop
 
@@ -58,21 +56,13 @@ that check trustworthy and fast enough to run after every edit.
 Attack the highest *self-time* functions first — then switch to sweeping the
 whole distribution once the obvious peaks are gone.
 
-- **First pass: the peaks.** A tall bar is often a *blunder* — an accidental
-  O(n²), redundant work repeated in a loop, a pathological allocation, a call
-  that shouldn't be on the hot path at all. These are frequently one-line fixes
-  for outsized wins, and they're the right thing to chase first.
-- **Diminishing returns flip the strategy.** Once the peaks are shaved (or on a
-  codebase already through earlier optimization passes), the tallest bar is a
-  genuine, irreducible cost, not a mistake. Now total runtime is spread across
-  many medium-cost functions, and the leverage moves to a *technique applied
-  across the whole distribution* rather than a deeper assault on line 1.
-- Know which regime you're in. The mistake is staying in peak-sniping mode after
-  the peaks are real costs — or, conversely, reaching for a broad sweep before
-  you've cleared the cheap blunders. Read the profile as a distribution and ask
-  which one it's telling you. In the flattened regime especially, beware tunnel
-  vision on one clever idea when a dull mechanical technique applied broadly
-  wins more.
+- **First pass: the peaks.** A tall bar is often a *blunder* — accidental O(n²),
+  redundant work, pathological allocation, or a call that shouldn't be hot. Clear
+  these cheap, outsized wins first.
+- **Then sweep the flattened distribution.** Once the peaks are genuine costs,
+  leverage moves to mechanical techniques applied broadly: flatten dispatch, kill
+  allocation, specialize common shapes. Don't keep sniping once the profile says
+  the costs are spread out.
 - **Question the algorithm before sweeping mechanically.** Is the data structure
   right for the workload's actual access pattern? Is there a known algorithm
   with better complexity or constants for this problem shape? Loop-level polish
@@ -84,17 +74,14 @@ whole distribution once the obvious peaks are gone.
 
 The profile is the authority; your static reading of the code is a hypothesis.
 
-- **Don't trust an a-priori cost ranking — profile the real workload first.** A
-  careful static reading of the code can confidently invert the truth: the path
-  that looks algorithmically expensive may be a tiny fraction of real time while
-  some "incidental" post-processing step dominates. The up-front guess is for
-  enumerating *candidates*, not ranking them; let the profile rank.
+- **Don't trust an a-priori cost ranking — profile the real workload first.**
+  Static reading enumerates candidates; the profile ranks them.
 - **Self-time is reported *after* inlining.** The engine folds small helpers into
   their callers, so a tall self-time bar may actually be inlined callees doing the
   work — and a helper that looks cheap may be hot everywhere it gets inlined. Before
   acting on a bar, drop to line-level / position ticks to confirm what's actually
-  executing there. (Seen: a function at 17% self-time whose cost was an inlined sort,
-  while the sort's own frame read 2.7%.)
+  executing there. (Seen: 17% self-time in a function whose cost was an inlined
+  sort; the sort's own frame read 2.7%.)
 - **Group by a domain-meaningful dimension *and* read per-line — they answer
   different questions.** Per-group (by input type/config/size) tells you which
   *workload* dominates; per-line tells you which *code* executes most. They
@@ -104,14 +91,10 @@ The profile is the authority; your static reading of the code is a hypothesis.
 - **Counter-first on algorithmic ideas — instrument the domain counts before
   prototyping.** A profile tells you where *time* goes; before building a
   structural change, quantify the *premise* it rests on with a cheap counter:
-  the prune rate the new index would buy, the fraction of iterations actually
-  wasted, the composition of the candidate set you mean to filter. A false
-  premise dies for free this way — no code written. (Seen: a "skip wasted
-  rescans" idea where the counter showed 99.8% of iterations were wasted, which
-  *confirmed* it; and a tie-break idea where the counter showed the candidate
-  set it would reorder was empty — every selection came from an earlier
-  early-return — which killed it before a line was written.) The profile ranks
-  the code you have; counters test the code you're about to write.
+  the prune rate the new index would buy, the fraction of iterations wasted, the
+  composition of the candidate set you mean to filter. A false premise dies for
+  free this way — no code written. The profile ranks the code you have; counters
+  test the code you're about to write.
 
 ## 4. Capturing evidence: the profiling toolkit
 
@@ -129,27 +112,26 @@ Get the profile headlessly, then confirm hypotheses with trace flags.
   than the tool.
 - **Trace flags — *why* the engine couldn't make it fast.** `node --trace-deopt
   … | grep <fn>` shows a hot function kicked back to baseline and names the
-  unstable type/field; `--trace-ic` surfaces megamorphic sites (`N`-marked
-  transitions — evidence for `techniques/dispatch-inlining.md`);
+  unstable type/field; `--log-ic` surfaces inline-cache state transitions
+  (evidence for `techniques/dispatch-inlining.md`);
   `--allow-natives-syntax` + `%GetOptimizationStatus(fn)` after warmup confirms
   it actually reached the optimizing tier.
-- The two are complementary — get both before a non-obvious rewrite.
+- The two are complementary — get trace evidence before an engine-level rewrite
+  about deopts, inlineability, dispatch, or type instability.
 
 ---
 
 ## Technique catalog — load by bottleneck type
 
-The numbered sections of this file (#1–#7) are **always-on methodology**: they
-apply to every session, so they live here. The specific *techniques* are split
-into on-demand files — once the profile tells you what kind of bottleneck you
-have, read the matching file. Don't load all three preemptively; load the one
-the profile points at.
+Once the profile tells you what kind of bottleneck you have, read the matching
+file below. Start with the one the profile points at; load another only when
+evidence or a cross-reference points there.
 
 - **Call/dispatch overhead** → `techniques/dispatch-inlining.md`. Symptoms: a hot
-  loop calling helpers; polymorphic/megamorphic call sites (`--trace-ic` shows
-  `N`-marked transitions); a function too big to inline its callees; deopts from
-  type instability. Often the highest-leverage mechanical technique — load this
-  first when the hot bar is doing dispatch rather than compute.
+  loop calling helpers; polymorphic/megamorphic call sites (`--log-ic` shows
+  unstable inline-cache state); a function too big to inline its callees; deopts
+  from type instability. Often the highest-leverage mechanical technique — load
+  this first when the hot bar is doing dispatch rather than compute.
 - **Memory: allocation, layout, locality, bulk ops** → `techniques/memory.md`.
   Symptoms: GC is a real slice of the profile; the loop is cache-miss-bound (cost
   on a dereference, not the math); per-iteration allocation; or you're choosing a
@@ -158,10 +140,9 @@ the profile points at.
   loop doing redundant per-iteration work, re-deciding a branch/config every
   iteration, transcendental/library math per element, or data-dependent branches.
 
-These technique files cite **V8** engine-level specifics — SMI ranges, inlining
-budgets, shape monomorphism. Other engines (JSC, SpiderMonkey) share the broad
-principles but differ in details; if the code targets browsers, re-verify wins
-there rather than asserting V8 behavior as universal JS truth.
+These files cite **V8** specifics (SMI ranges, inlining budgets, shape
+monomorphism); other engines share the principles but differ in detail, so
+re-verify browser wins rather than asserting V8 behavior as universal.
 
 ## 5. Measuring against noise
 
@@ -237,28 +218,16 @@ there rather than asserting V8 behavior as universal JS truth.
   bug. Guard it behind a cheap flag computed once instead, so it stays correct
   for any future caller at the same speed.
 
----
+Two final habits are easy to forget:
 
-## The meta-lesson
+- **Welcome a second set of eyes.** Fresh perspective can spot a redundant pass
+  that incremental profiling normalized into the background; your own profile,
+  read alone, anchors you to expected costs.
+- **Distrust the opening plan.** It's the hypothesis you're least likely to
+  re-examine once you start building. Spike its premise first. (Seen: a plan to
+  replace a spatial sort everywhere, redirected after spikes showed the sort was
+  irreplaceable and the real win lived elsewhere.)
 
-The gap between a modest result and a large one is rarely knowledge of any
-technique above — it's the discipline of applying them. Four habits carry most
-of it; the first two just restate the sections, the last two add what they don't:
-
-1. **Make change safe first (#1)** — a weak net caps both vision and nerve.
-2. **Know whether you're sniping or sweeping (#2)** — the wrong mode for the
-   regime you're in is the trap.
-3. **Profile the real workload (#3) — and welcome a second set of eyes.** The
-   largest structural wins often come from a fresh perspective spotting a
-   redundant pass that incremental profiling had normalized into the background.
-   Your own profile, read alone, anchors you to the costs you already expected.
-4. **Spike the premise before committing to the plan.** The headline plan that
-   opens a session is the most dangerous thing in it — the hypothesis you're
-   least likely to re-examine once you've started building. Prototype its core
-   assumption cheaply (a spike, or just a counter — #3) first. (Seen: a
-   session-opening plan to replace a spatial sort everywhere, redirected by a
-   weekend of spikes showing the sort was irreplaceable and the real win lived
-   elsewhere.)
-
-The techniques are common knowledge. The discipline of applying them broadly,
-under the protection of a check you trust, is what produces the large win.
+The techniques are common knowledge. The discipline — a trusted safety net, real
+profiles, cheap premise spikes, and honest measurements — is what produces the
+large win.

@@ -1,8 +1,7 @@
 # Memory: allocation, layout, locality, bulk ops
 
 Techniques for when the bottleneck is **memory-shaped** — allocation/GC, cache
-locality, or choice of data representation. Measure GC% *before* chasing
-allocation: it's a reflex often aimed at a non-problem.
+locality, or choice of data representation.
 
 ## Use typed arrays; avoid per-iteration allocation
 

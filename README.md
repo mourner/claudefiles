@@ -126,10 +126,11 @@ every matching hook on a call and blocks it if any one of them does.
 
 [`skills/js-perf-notes/SKILL.md`](skills/js-perf-notes/SKILL.md) — a distilled,
 project-agnostic reference of JavaScript/V8 performance-optimization principles: a profiling
-loop, the headless tooling (`flamebearer`, `--trace-deopt`), V8 specifics (inlining budgets,
-SMI range, hidden classes, cache/memory layout), benchmarking against noise, and how to report
-results honestly. It's a *reference to consult*, not a workflow to run — Claude pulls it in on
-its own when a task is about profiling or optimizing hot code.
+loop, headless tooling (`flamebearer`, `--trace-deopt`), benchmarking against noise, and
+honest reporting. Bottleneck-specific V8 techniques (inlining budgets, SMI range, hidden
+classes, cache/memory layout) live in on-demand files under `skills/js-perf-notes/techniques/`.
+It's a *reference to consult*, not a workflow to run — Claude pulls it in on its own when a
+task is about profiling or optimizing hot code.
 
 ### Install (plugin)
 
