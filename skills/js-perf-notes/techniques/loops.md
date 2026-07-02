@@ -20,6 +20,14 @@ flagged, not preemptively.
 - Keep a general fallback for the rare shapes — specialize the 90% case, don't
   rewrite the whole matrix.
 
+## Closures and callback iteration in hot paths
+
+- A callback created per call (`arr.sort((a, b) => …)` inside a hot function,
+  a fresh arrow passed to `forEach`/`map`/`filter` in a hot loop) allocates a
+  closure each time *and* is an un-inlineable call per element. Hoist the
+  function to module scope, and where the profiler flags the iteration itself,
+  prefer a plain index `for` loop over callback-style built-ins.
+
 ## Cheap substitutions — only in proven hot paths
 
 - Micro-level rewrites (bit ops over arithmetic, `(x / n) | 0` over

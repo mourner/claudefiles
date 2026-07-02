@@ -29,7 +29,8 @@ Every optimization session is the same cycle:
 
 1. **Profile** the real workload (see #4 for tooling).
 2. **Hypothesize** from the profile — not from reading the code (#3).
-3. **Change one thing.**
+3. **Change one thing** — routing to the matching `techniques/` file via the
+   catalog below once the bottleneck type is clear.
 4. **Verify correctness** against the safety net (#1).
 5. **Measure** against noise (#5), then keep or revert — never skip this and
    claim the win anyway; "should be faster" is a hypothesis, not a result.
@@ -109,7 +110,8 @@ Get the profile headlessly, then confirm hypotheses with trace flags.
   the line-level confirmation #3 demands before acting on a tall bar. Nothing
   hinges on this tool, though: the `.cpuprofile` is a standard format any
   sampling-profiler reader can parse, and the discipline (#2, #3) matters more
-  than the tool.
+  than the tool. Zero-dependency fallback: `node --cpu-prof bench.js` writes a
+  `*.cpuprofile` (plain JSON — parse it directly, or open in any profiler UI).
 - **Trace flags — *why* the engine couldn't make it fast.** `node --trace-deopt
   … | grep <fn>` shows a hot function kicked back to baseline and names the
   unstable type/field; `--log-ic` surfaces inline-cache state transitions
@@ -168,13 +170,10 @@ re-verify browser wins rather than asserting V8 behavior as universal.
   results into a checksum (or otherwise consume them after the loop) so every
   iteration's work stays observable.
 - **Don't let the timer outweigh what it times.** At ns/op scale a per-iteration
-  `performance.now()` (or counter bump) is itself a measurable cost *and* a
-  distortion of the profile — it can show up as one of the tallest bars. Time
-  coarse-grained instead: wrap the whole loop, or only the iterations that can
-  actually vary, rather than every iteration. A sampling profiler avoids this
-  probe cost entirely — prefer it over manual instrumentation for hot inner
-  loops. (Seen: two `now()` calls per op were ~10% of the profile until moved off
-  the per-iteration path.)
+  `performance.now()` (or counter bump) is itself a cost *and* a distortion of
+  the profile (seen: two `now()` calls per op were ~10% of it). Time
+  coarse-grained — wrap the whole loop — and prefer a sampling profiler over
+  manual instrumentation for hot inner loops.
 - **Interleave A and B runs (ABAB), not batched (AAAA-BBBB).** Thermal
   throttling, clock drift, and accumulating background load bias whichever
   variant runs later; alternating cancels the drift instead of attributing it to
@@ -189,28 +188,23 @@ re-verify browser wins rather than asserting V8 behavior as universal.
   the metric is noisy; keep N high enough that the clusters separate.
 - To isolate one change's effect, revert *only* the code under test — not the
   scaffolding (build config, harness, fixtures) the measurement needs to run.
-- **"Does less work" is a hypothesis, not a result — and it's data-dependent.** A
-  change that provably executes fewer operations can still be slower: e.g.
-  replacing one blanket bulk operation with several targeted ones loses when the
-  data favors the single contiguous path, because many small ops cost more than
-  one big one. Validate every "obviously cheaper" change on a *representative*
-  workload, and re-measure before carrying it to data with a different
-  distribution.
+- **"Does less work" is a hypothesis, and data-dependent.** Provably fewer
+  operations can still be slower (e.g. several targeted small ops losing to one
+  blanket bulk op when the data favors the contiguous path). Validate every
+  "obviously cheaper" change on a *representative* workload; re-measure before
+  carrying it to a different distribution.
 
-## 6. Report what you measured, not what you concluded
+## 6. Before reporting: the gate
 
-- Show **raw numbers and the exact commands** that produced them — never a
-  rounded "~15% faster" without the data behind it. The reader must be able to
-  reproduce the measurement, and the raw numbers often reveal what a summary
-  hides (bimodal runs, one outlier case carrying the average).
-- Report **per-case** numbers, not just one blended aggregate — individual large
-  speedups are legible where a single median hides them and drowns in noise.
-- **Never report a win that wasn't measured.** A change that should be faster
-  by reasoning is a hypothesis (see #5) — label it as such, or measure it. The
-  same goes for changes kept "because they can't hurt": unmeasured is unproven.
-- State what was *not* tested: workloads, data distributions, or engines the
-  numbers don't cover. A win on one distribution carried silently to another is
-  how regressions ship with a green report attached.
+Every claim in the report must pass all four:
+
+- **Measured, not reasoned.** No unmeasured "should be faster" or kept-because-
+  it-can't-hurt wins — label hypotheses as hypotheses (see #5).
+- **Raw numbers + exact commands**, so the reader can reproduce them and spot
+  what a summary hides (bimodal runs, one outlier carrying the average).
+- **Per-case numbers**, not one blended aggregate that drowns individual wins.
+- **Untested workloads/distributions/engines stated.** A win carried silently
+  to a different distribution is how regressions ship with a green report.
 
 ## 7. Don't trade correctness for speed silently
 
@@ -218,7 +212,7 @@ re-verify browser wins rather than asserting V8 behavior as universal.
   bug. Guard it behind a cheap flag computed once instead, so it stays correct
   for any future caller at the same speed.
 
-Two final habits are easy to forget:
+## Two final habits, easy to forget
 
 - **Welcome a second set of eyes.** Fresh perspective can spot a redundant pass
   that incremental profiling normalized into the background; your own profile,
