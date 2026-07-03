@@ -10,7 +10,16 @@
 # the account reports them, costs are computed from the session transcript at public
 # API prices, and the prompt-cache TTL is detected from actual usage — so seat,
 # enterprise, and API-key billing all work unmodified. Requires bash and jq.
+
+# All numeric parsing (printf %.0f, awk floats, jq output) assumes C-locale decimal
+# points; under e.g. de_DE printf rejects "16.4" outright.
+export LC_ALL=C
+
 input=$(cat)
+
+# Without jq nothing below can parse the payload — bail with a legible stub
+# instead of a half-rendered line plus stderr noise.
+command -v jq >/dev/null || { echo "$(basename "$PWD") (statusline: jq not found)"; exit 0; }
 
 # Single source of truth for pricing: base input $/MTok per model family, matched as
 # a substring of the model id. All other rates are fixed ratios of base input across
@@ -18,22 +27,25 @@ input=$(cat)
 # write 2x. Unknown future models fall back to Opus pricing.
 PRICES='{"fable": 10, "opus": 5, "sonnet": 3, "haiku": 1}'
 
+# Every value goes through @sh — even the ones that are numbers today — so a
+# future payload-shape change (e.g. resets_at becoming an ISO string) yields a
+# harmlessly quoted assignment instead of a malformed/injectable eval.
 eval "$(echo "$input" | jq -r --argjson P "$PRICES" '
   (.model.id // "") as $id |
   "MODEL=" + (.model.display_name // "?" | @sh),
   "MODEL_ID=" + ($id | @sh),
-  "PRICE=" + ([$P | to_entries[] | select(. as $e | $id | test($e.key)) | .value] | first // 5 | tostring),
+  "PRICE=" + ([$P | to_entries[] | select(. as $e | $id | test($e.key)) | .value] | first // 5 | tostring | @sh),
   "EFFORT=" + (.effort.level // "" | @sh),
-  "INP=" + (.context_window.current_usage.input_tokens // 0 | tostring),
-  "CC=" + (.context_window.current_usage.cache_creation_input_tokens // 0 | tostring),
-  "CR=" + (.context_window.current_usage.cache_read_input_tokens // 0 | tostring),
-  "OUT=" + (.context_window.current_usage.output_tokens // 0 | tostring),
-  "CTX_SIZE=" + (.context_window.context_window_size // 200000 | tostring),
-  "FIVE_H=" + (.rate_limits.five_hour.used_percentage // "" | tostring),
-  "FIVE_H_RESET=" + (.rate_limits.five_hour.resets_at // "" | tostring),
-  "WEEK=" + (.rate_limits.seven_day.used_percentage // "" | tostring),
-  "WEEK_RESET=" + (.rate_limits.seven_day.resets_at // "" | tostring),
-  "COST_USD=" + (.cost.total_cost_usd // "" | tostring),
+  "INP=" + (.context_window.current_usage.input_tokens // 0 | tostring | @sh),
+  "CC=" + (.context_window.current_usage.cache_creation_input_tokens // 0 | tostring | @sh),
+  "CR=" + (.context_window.current_usage.cache_read_input_tokens // 0 | tostring | @sh),
+  "OUT=" + (.context_window.current_usage.output_tokens // 0 | tostring | @sh),
+  "CTX_SIZE=" + (.context_window.context_window_size // 200000 | tostring | @sh),
+  "FIVE_H=" + (.rate_limits.five_hour.used_percentage // "" | tostring | @sh),
+  "FIVE_H_RESET=" + (.rate_limits.five_hour.resets_at // "" | tostring | @sh),
+  "WEEK=" + (.rate_limits.seven_day.used_percentage // "" | tostring | @sh),
+  "WEEK_RESET=" + (.rate_limits.seven_day.resets_at // "" | tostring | @sh),
+  "COST_USD=" + (.cost.total_cost_usd // "" | tostring | @sh),
   "TRANSCRIPT=" + (.transcript_path // "" | @sh),
   "CWD=" + (.workspace.current_dir // "" | @sh)
 ')"
@@ -161,6 +173,10 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # A "real" user prompt is string content that isn't a harness wrapper
   # (<command-*>, <local-command-*>, <system-reminder>), or array content with no
   # tool_result — bare startswith("<") would misclassify pasted XML/HTML.
+  # Sidechain rows (older Claude Code logs subagent traffic inline in the main
+  # transcript, isSidechain: true) and meta rows (e.g. the session-start "Caveat:"
+  # notice) look like plain-string user prompts but aren't — either would reset Δ
+  # and drag LAST_TS forward mid-turn, silently dropping cost from the turn.
   # The cache TTL comes from which tier the main thread actually writes to
   # (usage.cache_creation breakdown), so no billing-type assumptions are needed.
   # A single request can write breakpoints to both tiers at once (the API allows it),
@@ -174,7 +190,8 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # first occurrence of each id and skips the rest; rows without an id are counted
   # unconditionally (can't dedup, and the miss is rarer than collapsing them all).
   read -r T_MAIN D_MAIN CACHE_TTL LAST_TS < <(jq -rn --argjson P "$PRICES" "$JQ_BURN"'
-    def isUser: .type == "user" and (.message.content as $c |
+    def isUser: .type == "user" and (.isSidechain != true) and (.isMeta != true)
+      and (.message.content as $c |
       if ($c | type) == "string"
       then ($c | test("^<(command-|local-command-|system-reminder)") | not)
       else ([$c[]?.type] | index("tool_result") | not) end);
@@ -201,7 +218,10 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # subagent history into Δ.
   S_TOT=0; S_TURN=0
   SUB_DIR="${TRANSCRIPT%.jsonl}/subagents"
-  if [ -d "$SUB_DIR" ]; then
+  # nullglob so an empty subagents/ dir yields an empty list instead of a literal
+  # "*.jsonl" that jq would choke on (previously only saved by the 2>/dev/null).
+  shopt -s nullglob; SUB_FILES=("$SUB_DIR"/*.jsonl); shopt -u nullglob
+  if [ "${#SUB_FILES[@]}" -gt 0 ]; then
     read -r S_TOT S_TURN < <(jq -rn --argjson P "$PRICES" "$JQ_BURN"'
       reduce (inputs | select(.message.usage)) as $m ({tot: 0, turn: 0, seen: {}};
         (($m.message.id) // "") as $id
@@ -211,7 +231,7 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
             | (if $id != "" then .seen[$id] = true else . end)
           end)
       | "\(.tot) \(.turn)"
-    ' --arg ts "$LAST_TS" "$SUB_DIR"/*.jsonl 2>/dev/null)
+    ' --arg ts "$LAST_TS" "${SUB_FILES[@]}" 2>/dev/null)
     : "${S_TOT:=0}"; : "${S_TURN:=0}"
   fi
 
