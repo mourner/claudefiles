@@ -141,5 +141,64 @@
     "tool_input": {"command": "cat foo.py"},
     "expect": "deny",
     "denyMatch": "Read tool"
+  },
+  {
+    "name": "grep named in another command's arguments is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git commit -m \"fix grep someSymbolName handling\""},
+    "expect": "allow"
+  },
+  {
+    "name": "echo mentioning a two-dot git diff range is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "echo git diff main..feature"},
+    "expect": "allow"
+  },
+  {
+    "name": "grep behind wrapper commands is still denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "timeout 5 grep someSymbolName"},
+    "expect": "deny",
+    "denyMatch": "looks like a symbol"
+  },
+  {
+    "name": "grep after a background & separator is still denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "echo hello & grep someSymbolName"},
+    "expect": "deny",
+    "denyMatch": "looks like a symbol"
+  },
+  {
+    "name": "sudo cat of a gated file is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sudo cat foo.ts"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "a stderr-only redirect does not exempt a cat (2>/dev/null)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.ts 2>/dev/null"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "cat with 2>&1 is still denied (stdout still dumps)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.ts 2>&1"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "cat with an &> full redirect is allowed (write target)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat foo.json &> out"},
+    "expect": "allow"
+  },
+  {
+    "name": "Read with offset but no limit is allowed (slicing intent)",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "big.ts", "offset": 100},
+    "expect": "allow"
   }
 ]

@@ -13,13 +13,13 @@
 //   - block `git show <ref>:<path>` whole-file dumps of a code/JSON file (use git checkout / sed)
 //   - block two-dot `git diff A..B` branch ranges (use three-dot A...B from the merge-base)
 // Read:
-//   - block an unscoped read of a >16 KB code or JSON file (a present `limit` is the escape hatch)
+//   - block an unscoped read of a >16 KB code or JSON file (a present `limit`/`offset` is the escape hatch)
 // WebFetch:
 //   - block fetching a GitHub issue/PR/blob page (noisy rendered HTML) — use the gh CLI instead
 // LSP (dormant — plugin disabled by default, fires only if re-enabled):
 //   - hard-deny `workspaceSymbol`; deny `documentSymbol` on a large file
 
-import {existsSync, readFileSync, statSync} from 'fs';
+import {existsSync, readFileSync, realpathSync, statSync} from 'fs';
 import {fileURLToPath} from 'url';
 
 // Block threshold in bytes. Bytes track context tokens (~4 chars/token) far better than line count,
@@ -69,10 +69,15 @@ const PAGER = new Set(['less', 'more']);
 const GREP_FILTER_FLAG = /^(--include|--exclude|-g)(=|$)/; // a scoping flag → grep is already bounded
 const SHELL_EXPANSION = /[*?[\]{}$~`]/;                    // glob/$var/~/command-subst → not a static literal
 const SED_INPLACE = /^-i/;                                 // `sed -i`/`-i.bak` → an edit, not a read
-const REDIRECT = /[^<]>|^>/;                               // a bare `>`/`>>` output redirect (not `<<EOF`)
+// A *stdout* redirect: `>`/`>>`/`&>`/`foo>out`, but NOT a stderr-only `2>`/`2>&1` — those leave the
+// file content flowing to stdout (and into context), so they must not exempt a range-read. The
+// lookbehind also skips `<>`/`<<` and the second `>` of `>>`.
+const REDIRECT = /(?<![<2>])>/;
 const GIT_DIFF_RANGE = /^([\w@~^/.-]+)\.\.([\w@~^/.-]+)$/; // two-dot `A..B` ref range
 const HEREDOC_OPEN = /<<-?\s*['"]?(\w+)['"]?/;             // heredoc opener, capturing the delimiter
-const SEGMENT_SPLIT = /&&|\|\||;|\n/;                      // shell command separators
+// Shell command separators, including a single background `&` (`echo hi & grep …` runs both). The
+// lookarounds keep `&&` (handled by its own alternative), `2>&1`, `<&3` and `&>out` in one piece.
+const SEGMENT_SPLIT = /&&|\|\||;|\n|(?<![<>&])&(?![&>])/;
 const WHITESPACE = /\s+/;
 const DIGITS = /^\d+$/;
 
@@ -89,10 +94,37 @@ const stripLead = (tokens) => {
     return tokens.slice(i);
 };
 
+// Wrapper commands that execute their argument list as a command — the real command word follows
+// them (possibly after the wrapper's own flags, or a duration for `timeout`). `VAR=x` prefix
+// assignments are skipped the same way.
+const WRAPPERS = new Set(['sudo', 'doas', 'command', 'env', 'nice', 'nohup', 'time', 'timeout', 'stdbuf', 'xargs']);
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const DURATION = /^\d+(\.\d+)?[smhd]?$/; // `timeout 5`, `timeout 2.5s`
+
+// Index of the segment's effective command word, or -1. Checks key off this position so
+// `sudo grep …` is still a grep but `echo grep …` / `git commit -m "… grep …"` are not — a command
+// merely *named* in another command's arguments isn't being run. Best-effort (a wrapper flag that
+// takes a value, like `sudo -u root`, derails it), which only ever fails open.
+function cmdAt(tokens) {
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        if (ASSIGNMENT.test(t)) continue;
+        if (WRAPPERS.has(t)) {
+            while (i + 1 < tokens.length &&
+                (tokens[i + 1].startsWith('-') || (t === 'timeout' && DURATION.test(tokens[i + 1])))) i++;
+            continue;
+        }
+        return i;
+    }
+    return -1;
+}
+
 function checkGrep(tokens) {
-    // Locate a grep/rg token that is NOT `git grep` (which is exempt).
-    const gi = tokens.findIndex((t, i) => GREP.has(t) && tokens[i - 1] !== 'git');
-    if (gi === -1) return;
+    // The grep/rg must be the segment's effective command word. `git grep` (repo-scoped, exempt)
+    // and commands merely mentioning grep in their arguments (`git commit -m "… grep …"`) both
+    // fall out naturally: their command word isn't in GREP.
+    const gi = cmdAt(tokens);
+    if (gi === -1 || !GREP.has(tokens[gi])) return;
 
     const positionals = [];
     for (const t of tokens.slice(gi + 1)) {
@@ -129,9 +161,10 @@ function checkGrep(tokens) {
 // `cat foo.ts` forces a second, duplicate read before any edit can happen. Routing the first read
 // through the Read tool avoids that double-read. Hence: no size gate here, by design.
 function checkRangeRead(tokens) {
-    const cmd = tokens[0];
+    const ci = cmdAt(tokens);
+    const cmd = tokens[ci];
     if (!RANGE_READ.has(cmd)) return;
-    const target = tokens.slice(1).map(unquote).find(t => GATED_EXT.test(t));
+    const target = tokens.slice(ci + 1).map(unquote).find(t => GATED_EXT.test(t));
     if (!target) return;
     // `sed -i`/`-i.bak`/`--in-place`, `gawk -i inplace` are edits, not reads — let them through.
     if (tokens.some(t => SED_INPLACE.test(t) || t === '--in-place')) return;
@@ -155,7 +188,7 @@ function checkRangeRead(tokens) {
 // when a segment's first stage is `find` whose -exec/-execdir command is a RANGE_READ. Fail open on
 // anything else (a find with no range-read exec is fine).
 function checkFindExec(tokens) {
-    if (tokens[0] !== 'find') return;
+    if (tokens[cmdAt(tokens)] !== 'find') return;
     const ei = tokens.findIndex(t => t === '-exec' || t === '-execdir');
     if (ei === -1) return;
     if (RANGE_READ.has(tokens[ei + 1])) {
@@ -170,8 +203,8 @@ function checkFindExec(tokens) {
 // unpiped: `git show ...:... | sed -n` is a scoped inspect and is left alone (the caller's pipe
 // already bounds the volume).
 function checkGitShow(tokens) {
-    const gi = tokens.indexOf('git');
-    if (gi === -1 || tokens[gi + 1] !== 'show') return;
+    const gi = cmdAt(tokens);
+    if (gi === -1 || tokens[gi] !== 'git' || tokens[gi + 1] !== 'show') return;
     for (const tok of tokens.slice(gi + 2)) {
         const t = unquote(tok);
         if (t.startsWith('-')) continue;
@@ -195,8 +228,8 @@ function checkGitShow(tokens) {
 // from the merge-base. Only the two-dot range form is blocked; `git diff A B` (space) and explicit
 // paths like `git diff -- ../foo` are left alone. The escape hatch is the space form.
 function checkGitDiff(tokens) {
-    const gi = tokens.indexOf('git');
-    if (gi === -1 || tokens[gi + 1] !== 'diff') return;
+    const gi = cmdAt(tokens);
+    if (gi === -1 || tokens[gi] !== 'git' || tokens[gi + 1] !== 'diff') return;
     for (const tok of tokens.slice(gi + 2)) {
         if (tok === '--') return;          // pathspecs follow — stop scanning
         if (tok.startsWith('-')) continue; // flag
@@ -271,7 +304,7 @@ function checkBash(input) {
     if (loopAt !== -1) {
         const doneAt = segTokens.findIndex((t, i) => i > loopAt && t.includes('done'));
         const body = segTokens.slice(loopAt + 1, doneAt === -1 ? undefined : doneAt);
-        if (body.some(t => RANGE_READ.has(t[0]))) {
+        if (body.some(t => RANGE_READ.has(t[cmdAt(t)]))) {
             deny('Reading files in a loop dumps each one whole — read the parts you need with the ' +
                 'Read tool (`offset`+`limit`), or search across them with a scoped `rg <pattern> <paths>`.');
         }
@@ -282,7 +315,9 @@ function checkBash(input) {
 
 function checkRead(input) {
     const filePath = input.file_path;
-    if (typeof filePath !== 'string' || input.limit != null) return; // a present `limit` is the escape hatch
+    // A present `limit` OR `offset` is the escape hatch — either one shows the read is already a
+    // deliberate slice, which is all this gate is trying to induce.
+    if (typeof filePath !== 'string' || input.limit != null || input.offset != null) return;
     if (!GATED_EXT.test(filePath)) return; // logs/markdown/… always pass
 
     const size = fileSize(filePath);
@@ -361,9 +396,16 @@ export function decide({tool_name: toolName, tool_input: toolInput} = {}) {
 }
 
 // ── CLI entry (the actual PreToolUse hook) ──────────────────────────────────────────────────────
-// Run only when invoked as a script, not when imported by the tests. Reads the payload JSON from
-// stdin and, on a deny, writes the hook's decision JSON to stdout. A malformed payload → allow.
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Run only when invoked as a script, not when imported by the tests. Both sides of the comparison
+// go through realpath: Node resolves the main module URL through symlinks while argv[1] stays
+// literal, so a symlinked install path would otherwise never match — and the guard would silently
+// allow everything while looking installed. Reads the payload JSON from stdin and, on a deny,
+// writes the hook's decision JSON to stdout. A malformed payload → allow.
+let isMain = false;
+try {
+    isMain = realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch { /* no argv[1] or vanished path → not a direct invocation */ }
+if (isMain) {
     let reason = null;
     try {
         reason = decide(JSON.parse(readFileSync(0, 'utf8')));

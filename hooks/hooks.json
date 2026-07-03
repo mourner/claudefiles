@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash|WebFetch|LSP",
+        "matcher": "^(Read|Bash|WebFetch|LSP)$",
         "hooks": [
           {
             "type": "command",
