@@ -104,14 +104,13 @@ Get the profile headlessly, then confirm hypotheses with trace flags.
 - **Sampling profile — *where* time goes.** `flamebearer` summarizes Chrome
   traces (`.json`/`.gz`) and Node `.cpuprofile`s into a text report;
   `flamebearer-node bench.js` profiles a script in one step (`--help` for flags).
-  Check for an existing or repo-local copy first; install
-  (`npm i -g flamebearer`) only with user approval. The flag that matters for the
-  method: `--stacks <fn>` gives **per-line self-time including inlined code** —
-  the line-level confirmation #3 demands before acting on a tall bar. Nothing
-  hinges on this tool, though: the `.cpuprofile` is a standard format any
-  sampling-profiler reader can parse, and the discipline (#2, #3) matters more
-  than the tool. Zero-dependency fallback: `node --cpu-prof bench.js` writes a
-  `*.cpuprofile` (plain JSON — parse it directly, or open in any profiler UI).
+  Always run `which flamebearer-node` first: if installed (or repo-local),
+  use it — no approval needed, and its `--stacks <fn>` flag gives **per-line
+  self-time including inlined code**, the line-level confirmation #3 demands
+  before acting on a tall bar. Only if absent (and you'd rather not ask to
+  `npm i -g flamebearer`), fall back to `node --cpu-prof bench.js`, which
+  writes a `*.cpuprofile` (plain JSON — parse it directly); the discipline
+  (#2, #3) matters more than the tool.
 - **Trace flags — *why* the engine couldn't make it fast.** `node --trace-deopt
   … | grep <fn>` shows a hot function kicked back to baseline and names the
   unstable type/field; `--log-ic` surfaces inline-cache state transitions
