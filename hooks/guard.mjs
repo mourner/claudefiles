@@ -110,8 +110,11 @@ function cmdAt(tokens) {
         const t = tokens[i];
         if (ASSIGNMENT.test(t)) continue;
         if (WRAPPERS.has(t)) {
-            while (i + 1 < tokens.length &&
-                (tokens[i + 1].startsWith('-') || (t === 'timeout' && DURATION.test(tokens[i + 1])))) i++;
+            while (i + 1 < tokens.length) {
+                const next = tokens[i + 1];
+                if (next.startsWith('-') || (t === 'timeout' && DURATION.test(next))) i++;
+                else break;
+            }
             continue;
         }
         return i;
