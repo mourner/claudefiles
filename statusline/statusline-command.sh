@@ -86,14 +86,16 @@ fmt_cost() {
   fi
 }
 
-# Short "resets in" hint from an epoch-seconds deadline: "3d" / "2h" / "12m", or ""
-# if the deadline is unknown or already past.
+# Short "resets in" hint from an epoch-seconds deadline: "3d7h" / "22h" / "2h9m" /
+# "12m", or "" if the deadline is unknown or already past. Minutes only appear under
+# 3h left (when they matter for planning); above that, hours are rounded to nearest.
 fmt_reset() {
   [ -z "$1" ] && { echo ""; return; }
   local diff=$(( $1 - $(date +%s) ))
   if   [ "$diff" -le 0 ];     then echo ""
-  elif [ "$diff" -ge 86400 ]; then echo "$((diff / 86400))d"
-  elif [ "$diff" -ge 3600 ];  then echo "$((diff / 3600))h"
+  elif [ "$diff" -ge 86400 ]; then printf '%dd%dh' $((diff / 86400)) $(((diff % 86400) / 3600))
+  elif [ "$diff" -ge 10800 ]; then printf '%dh' $(((diff + 1800) / 3600))
+  elif [ "$diff" -ge 3600 ];  then printf '%dh%dm' $((diff / 3600)) $(((diff % 3600) / 60))
   else                             echo "$((diff / 60))m"
   fi
 }
@@ -104,12 +106,15 @@ fmt_reset() {
 # worth flagging — i.e. you're meaningfully over the line (>= PACE_WARN tenths) AND
 # far enough into the window for the extrapolation to mean anything (>= PACE_FLOOR of
 # it elapsed; early on, a tiny elapsed makes pace explode for no reason). Echoes ""
-# otherwise (coasting, no reset, window not started, past reset, or too early).
+# otherwise (coasting, at/over the limit, no reset, window not started, past reset,
+# or too early).
 PACE_WARN=11   # 1.1x — small dead zone above the 1.0 break-even so it doesn't flap
 PACE_FLOOR=10  # ignore the first 10% of the window
 fmt_pace() {
   [ -z "$1" ] || [ -z "$2" ] && { echo ""; return; }
   local used="$1" elapsed=$(( $3 - ($2 - $(date +%s)) ))
+  # already at/over the limit: the burn-rate warning is moot (nothing left to pace)
+  [ "$used" -ge 100 ] && { echo ""; return; }
   [ "$elapsed" -le $(( $3 * PACE_FLOOR / 100 )) ] && { echo ""; return; }
   # pace = used / (elapsed/window * 100); x10 for one-decimal formatting w/o floats,
   # rounded to nearest tenth (+half-denominator before the divide)

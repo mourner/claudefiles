@@ -83,7 +83,7 @@ test('statusline shows the limit reset hint after a space, limits joined by a pi
             seven_day: {used_percentage: 2, resets_at: now + 3 * 86400 + 60},
         },
     }));
-    assert.match(line, /5h:16% ↺2h \| 7d:2% ↺3d/);
+    assert.match(line, /5h:16% ↺2h\d+m \| 7d:2% ↺3d\dh/);
 });
 
 test('statusline zeroes a rate limit once its reset deadline has passed (stale rollover)', () => {
@@ -96,6 +96,21 @@ test('statusline zeroes a rate limit once its reset deadline has passed (stale r
     }));
     assert.match(line, /5h:0%/);
     assert.ok(!line.includes('101%'), line);
+});
+
+test('statusline shows a burn-rate flag when over-pace, but not once at/over the limit', () => {
+    const now = Math.floor(Date.now() / 1000);
+    // half the 5h window elapsed (resets in 2.5h) at 90% used → pace 1.8x
+    const overPace = render(status({
+        rate_limits: {five_hour: {used_percentage: 90, resets_at: now + 9000}},
+    }));
+    assert.match(overPace, /⚠1\.8x/, overPace);
+
+    // same pacing but already over the limit → no burn-rate flag
+    const maxed = render(status({
+        rate_limits: {five_hour: {used_percentage: 108, resets_at: now + 9000}},
+    }));
+    assert.ok(!maxed.includes('⚠'), maxed);
 });
 
 test('statusline session cost uses total_cost_usd when present', () => {
