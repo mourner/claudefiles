@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {mkdtempSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(here, '..', 'statusline-command.sh');
@@ -116,6 +118,45 @@ test('statusline shows a burn-rate flag when over-pace, but not once at/over the
 test('statusline session cost uses total_cost_usd when present', () => {
     const line = render(status({cost: {total_cost_usd: 14.9}}));
     assert.ok(line.includes('Σ$14.90'), line);
+});
+
+// Write a transcript JSONL with a single 1h-cache-writing assistant turn `ageSec`
+// seconds ago, optionally followed by a fresh non-cache system row (as a session
+// resume appends). Returns the path. The file's mtime ends up "now", so any code
+// keying the countdown off mtime would wrongly see the cache as fresh.
+function writeTranscript({ageSec, trailingSystem}) {
+    const dir = mkdtempSync(join(tmpdir(), 'statusline-'));
+    const path = join(dir, 'transcript.jsonl');
+    const iso = s => new Date((Math.floor(Date.now() / 1000) - s) * 1000).toISOString();
+    const lines = [
+        JSON.stringify({type: 'user', timestamp: iso(ageSec), message: {content: 'hi'}}),
+        JSON.stringify({type: 'assistant', timestamp: iso(ageSec), message: {
+            id: 'a1', model: 'claude-opus',
+            usage: {input_tokens: 10, output_tokens: 20,
+                cache_creation: {ephemeral_1h_input_tokens: 5000}, cache_read_input_tokens: 1000},
+        }}),
+    ];
+    if (trailingSystem) lines.push(JSON.stringify({type: 'system', timestamp: iso(1), message: {}}));
+    writeFileSync(path, `${lines.join('\n')}\n`);
+    return path;
+}
+
+test('cache countdown anchors to the last real cache write, not the transcript mtime', () => {
+    // 1h cache written 2h ago, then a fresh system row bumps mtime to "now".
+    // The cache is dead; keying off mtime would wrongly show a full hour left.
+    const expired = render(status({
+        transcript_path: writeTranscript({ageSec: 7200, trailingSystem: true}),
+        context_window: {context_window_size: 200000, current_usage: {input_tokens: 12000}},
+    }));
+    assert.match(expired, /❄now/, expired);
+
+    // A live cache written 20 min ago should still count down (~40m left).
+    const live = render(status({
+        transcript_path: writeTranscript({ageSec: 1200, trailingSystem: false}),
+        context_window: {context_window_size: 200000, current_usage: {input_tokens: 12000}},
+    }));
+    assert.match(live, /❄\d+m/, live);
+    assert.ok(!/❄now/.test(live), live);
 });
 
 test('statusline malformed stdin still produces a line (no crash)', () => {

@@ -194,13 +194,13 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # naive per-line sum double-counts (~2x on tool-using turns). `seen` keeps the
   # first occurrence of each id and skips the rest; rows without an id are counted
   # unconditionally (can't dedup, and the miss is rarer than collapsing them all).
-  read -r T_MAIN D_MAIN CACHE_TTL LAST_TS < <(jq -rn --argjson P "$PRICES" "$JQ_BURN"'
+  read -r T_MAIN D_MAIN CACHE_TTL LAST_TS CACHE_TS < <(jq -rn --argjson P "$PRICES" "$JQ_BURN"'
     def isUser: .type == "user" and (.isSidechain != true) and (.isMeta != true)
       and (.message.content as $c |
       if ($c | type) == "string"
       then ($c | test("^<(command-|local-command-|system-reminder)") | not)
       else ([$c[]?.type] | index("tool_result") | not) end);
-    reduce inputs as $m ({t: 0, d: 0, ttl: 0, ts: "", seen: {}};
+    reduce inputs as $m ({t: 0, d: 0, ttl: 0, ts: "", cts: "", seen: {}};
       if   ($m | isUser)      then .d = 0 | .ts = ($m.timestamp // .ts)
       elif ($m.message.usage) then
         (($m.message.id) // "") as $id
@@ -211,11 +211,19 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
             | if   ($cc.ephemeral_5m_input_tokens // 0) > 0 then .ttl = 300
               elif ($cc.ephemeral_1h_input_tokens // 0) > 0 then .ttl = 3600
               else . end
+            # Anchor the expiry countdown to the *last real cache write*, not the
+            # transcript mtime: resuming an idle session appends system/meta rows
+            # that bump mtime without touching the cache, which would otherwise
+            # reset the countdown to a full TTL for a cache that died hours ago.
+            | (if (($cc.ephemeral_5m_input_tokens // 0)
+                 + ($cc.ephemeral_1h_input_tokens // 0)
+                 + ($m.message.usage.cache_creation_input_tokens // 0)) > 0
+               then .cts = ($m.timestamp // .cts) else . end)
           end
       else . end)
-    | "\(.t) \(.d) \(.ttl) \(.ts)"
+    | "\(.t) \(.d) \(.ttl) \(.ts) \(if .cts == "" then 0 else (.cts | sub("\\.[0-9]+Z$";"Z") | fromdateiso8601) end)"
   ' "$TRANSCRIPT" 2>/dev/null)
-  : "${T_MAIN:=0}"; : "${D_MAIN:=0}"; : "${CACHE_TTL:=0}"; : "${LAST_TS:=}"
+  : "${T_MAIN:=0}"; : "${D_MAIN:=0}"; : "${CACHE_TTL:=0}"; : "${LAST_TS:=}"; : "${CACHE_TS:=0}"
 
   # Subagents: all -> session; only those after LAST_TS -> current turn. If no user
   # prompt was found ($ts == ""), attribute nothing to the turn — an empty ts would
@@ -274,8 +282,14 @@ BURN_TURN_FMT=$(fmt_cost "$BURN_TURN_M")
 [ "$CACHE_TTL" -gt 0 ] || CACHE_TTL=300
 ORANGE_AT=$((CACHE_TTL / 5)); RED_AT=$((CACHE_TTL / 10))
 EXPIRY_COLOR=""
+# Anchor to the last real cache write (CACHE_TS), detected from usage above; the
+# transcript mtime is unreliable because resuming an idle session appends
+# system/meta rows that bump mtime without writing the cache. Fall back to mtime
+# only when no cache write was seen (older transcript formats / pre-first-response).
+CACHE_ANCHOR="${CACHE_TS:-0}"
+[ "$CACHE_ANCHOR" -gt 0 ] 2>/dev/null || CACHE_ANCHOR=$(file_mtime "$TRANSCRIPT")
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-  LEFT=$(( $(file_mtime "$TRANSCRIPT") + CACHE_TTL - $(date +%s) ))
+  LEFT=$(( CACHE_ANCHOR + CACHE_TTL - $(date +%s) ))
   if   [ "$LEFT" -le 0 ];    then EXPIRY_FMT="now"
   elif [ "$LEFT" -lt 60 ];   then EXPIRY_FMT="${LEFT}s"
   elif [ "$LEFT" -lt 3600 ]; then EXPIRY_FMT="$((LEFT / 60))m"
