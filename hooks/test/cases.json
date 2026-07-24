@@ -200,5 +200,24 @@
     "tool_name": "Read",
     "tool_input": {"file_path": "big.ts", "offset": 100},
     "expect": "allow"
+  },
+  {
+    "name": "git show of a big file into context is denied (use checkout/sed)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git show HEAD:big.ts"},
+    "expect": "deny",
+    "denyMatch": "dumps the whole"
+  },
+  {
+    "name": "git show piped to a scoped inspect is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git show HEAD:big.ts | sed -n '1,20p'"},
+    "expect": "allow"
+  },
+  {
+    "name": "git show redirected to a file is allowed (blob to disk, not context)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git show HEAD:big.ts > scratchpad/old.ts"},
+    "expect": "allow"
   }
 ]

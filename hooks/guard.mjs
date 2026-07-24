@@ -297,7 +297,10 @@ function checkBash(input) {
         checkGrep(tokens);
         checkFindExec(tokens);
         checkGitDiff(tokens);
-        if (!piped) checkGitShow(tokens);
+        // git show stays exempt on any pipe (its check treats a downstream `sed -n` as a scoped
+        // inspect) and on stdout redirection (`git show ref:file > out`) — the blob lands in a file,
+        // not context, which is a common A/B-benchmark move, not a hand-revert.
+        if (!piped && !REDIRECT.test(segments[i])) checkGitShow(tokens);
     }
 
     // `for f in a.ts b.ts; do cat "$f"; done` — the read target is the loop variable, so the
