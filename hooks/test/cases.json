@@ -103,7 +103,7 @@
     "expect": "allow"
   },
   {
-    "name": "Read of a >16KB .md file is allowed (not gated)",
+    "name": "Read of a >16KB .md file is allowed (prose is not size-gated)",
     "tool_name": "Read",
     "tool_input": {"file_path": "big.md"},
     "expect": "allow"
@@ -218,6 +218,77 @@
     "name": "git show redirected to a file is allowed (blob to disk, not context)",
     "tool_name": "Bash",
     "tool_input": {"command": "git show HEAD:big.ts > scratchpad/old.ts"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of a .md file is denied (editable, so the first read must go through Read)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat notes.md"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "a sed range-read of a .md file is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -n '1,50p' notes.md"},
+    "expect": "deny",
+    "denyMatch": "not `sed`"
+  },
+  {
+    "name": "cat of a .yml file is denied (config is editable)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat conf.yml"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "head of a .txt file is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "head -20 notes.txt"},
+    "expect": "deny",
+    "denyMatch": "not `head`"
+  },
+  {
+    "name": "reading .md files in a for-loop is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "for f in notes.md other.md; do cat \"$f\"; done"},
+    "expect": "deny",
+    "denyMatch": "Read tool"
+  },
+  {
+    "name": "awk over a .csv is allowed (data stream, never hand-edited)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "awk -F, '{print $1}' data.csv"},
+    "expect": "allow"
+  },
+  {
+    "name": "tail of a .log is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "tail -50 build.log"},
+    "expect": "allow"
+  },
+  {
+    "name": "Read of a >16KB .yml file is allowed (config is not size-gated)",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "big.yml"},
+    "expect": "allow"
+  },
+  {
+    "name": "git show of a big .md file is allowed (size gate is code-only)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git show HEAD:big.md"},
+    "expect": "allow"
+  },
+  {
+    "name": "sed -i on a .md file is allowed (an edit, not a read)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -i '' s/a/b/ notes.md"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of a .md redirected to a file is allowed (write target)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat notes.md > copy.md"},
     "expect": "allow"
   }
 ]

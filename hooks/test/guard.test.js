@@ -25,7 +25,7 @@ let fixtures, cwd0;
 
 before(() => {
     fixtures = mkdtempSync(join(tmpdir(), 'guard-test-'));
-    // Small existing files of gated extensions.
+    // Small existing files of gated code extensions.
     writeFileSync(join(fixtures, 'foo.json'), '{"x":1}\n');
     writeFileSync(join(fixtures, 'foo.ts'), 'export const x = 1;\n');
     writeFileSync(join(fixtures, 'foo.py'), 'x = 1\n');
@@ -33,6 +33,15 @@ before(() => {
     const big = 'x'.repeat(20 * 1024);
     writeFileSync(join(fixtures, 'big.ts'), big);
     writeFileSync(join(fixtures, 'big.md'), big);
+    writeFileSync(join(fixtures, 'big.yml'), big);
+    // Prose and config: editable, so gated for range-reads, but never size-gated.
+    writeFileSync(join(fixtures, 'notes.md'), '# notes\n');
+    writeFileSync(join(fixtures, 'other.md'), '# other\n');
+    writeFileSync(join(fixtures, 'notes.txt'), 'notes\n');
+    writeFileSync(join(fixtures, 'conf.yml'), 'a: 1\n');
+    // Data and logs: exempt from every check — they get awk'd and tailed, never hand-edited.
+    writeFileSync(join(fixtures, 'data.csv'), 'a,b\n1,2\n');
+    writeFileSync(join(fixtures, 'build.log'), 'boot\n');
     // An existing directory for the scoped-grep case.
     mkdirSync(join(fixtures, 'src'));
     // The guard resolves relative paths against the cwd; run from the fixture dir.

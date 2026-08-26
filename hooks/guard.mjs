@@ -8,12 +8,14 @@
 //
 // Bash:
 //   - block bare whole-tree `grep`/`rg` for a symbol-looking pattern (scope it to a subdir)
-//   - block sed/awk/head/tail/cat range-reads of a code/JSON file (use the Read tool)
+//   - block sed/awk/head/tail/cat range-reads of any editable file — code, prose or config
+//     (use the Read tool); logs and csv/tsv are exempt, they get tailed and awk'd, never edited
 //   - block guessed grep targets that don't exist (use `find` first)
 //   - block `git show <ref>:<path>` whole-file dumps of a code/JSON file (use git checkout / sed)
 //   - block two-dot `git diff A..B` branch ranges (use three-dot A...B from the merge-base)
 // Read:
-//   - block an unscoped read of a >16 KB code or JSON file (a present `limit`/`offset` is the escape hatch)
+//   - block an unscoped read of a >16 KB code or JSON file (a present `limit`/`offset` is the
+//     escape hatch); prose and config are not size-gated — they are often wanted whole
 // WebFetch:
 //   - block fetching a GitHub issue/PR/blob page (noisy rendered HTML) — use the gh CLI instead
 // LSP (dormant — plugin disabled by default, fires only if re-enabled):
@@ -31,7 +33,20 @@ const MAX_BYTES = 16 * 1024;
 // Extensions whose unscoped whole-file read wastes context: source code across common languages,
 // plus JSON/GeoJSON fixtures. Prose and data files (`.md/.txt/.log/.csv/.yaml/…`) stay exempt —
 // you usually do want the whole document. Add or remove extensions here as needed.
-const GATED_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|json|geojson|py|pyi|rb|go|rs|java|kt|kts|c|h|cc|cpp|cxx|hpp|hh|cs|php|swift|scala|clj|cljs|ex|exs|erl|hs|ml|lua|r|jl|dart|vue|svelte|sh|bash|zsh|sql|pl|pm|groovy|gradle|proto)$/i;
+// Code and structured-data formats: navigated by symbol, so a whole-file read is nearly always
+// more than was wanted. This is the list the SIZE gates use (checkRead, checkGitShow).
+const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|json|geojson|py|pyi|rb|go|rs|java|kt|kts|c|h|cc|cpp|cxx|hpp|hh|cs|php|swift|scala|clj|cljs|ex|exs|erl|hs|ml|lua|r|jl|dart|vue|svelte|sh|bash|zsh|sql|pl|pm|groovy|gradle|proto)$/i;
+
+// Prose, markup and config: legitimately read whole, but hand-edited as often as code. These join
+// the double-read checks and stay OUT of the size gates — gating a design doc or a yaml file just
+// yields an offset/limit covering the same bytes.
+const PROSE_EXT = /\.(md|mdx|markdown|txt|rst|adoc|ya?ml|toml|ini|cfg|conf|html?|css|scss|sass|less|xml|tf|tfvars)$/i;
+
+// Anything that might be hand-edited, and therefore anything whose first read must go through the
+// Read tool. Deliberately excludes logs, csv/tsv and jsonl: those get tailed and awk'd, never
+// edited, so there is no double read to prevent and blocking `awk -F, … data.csv` costs real work.
+// Extensionless files (Dockerfile, Makefile, .env) are a known gap — add a basename list if it bites.
+const isEditable = p => CODE_EXT.test(p) || PROSE_EXT.test(p);
 
 // A deny is thrown (not written) so the checks can bail from deep in the call stack; decide() catches
 // it and returns the reason, while any *other* throw falls through to allow (fail-open).
@@ -167,7 +182,7 @@ function checkRangeRead(tokens) {
     const ci = cmdAt(tokens);
     const cmd = tokens[ci];
     if (!RANGE_READ.has(cmd)) return;
-    const target = tokens.slice(ci + 1).map(unquote).find(t => GATED_EXT.test(t));
+    const target = tokens.slice(ci + 1).map(unquote).find(t => isEditable(t));
     if (!target) return;
     // `sed -i`/`-i.bak`/`--in-place`, `gawk -i inplace` are edits, not reads — let them through.
     if (tokens.some(t => SED_INPLACE.test(t) || t === '--in-place')) return;
@@ -214,7 +229,7 @@ function checkGitShow(tokens) {
         const ci = t.indexOf(':');
         if (ci <= 0) continue; // need <ref>:<path>
         const [ref, path] = [t.slice(0, ci), t.slice(ci + 1)];
-        if (!GATED_EXT.test(path)) return;
+        if (!CODE_EXT.test(path)) return;
         const size = fileSize(path); // on-disk size as a proxy for the <ref> blob
         if (size == null) return; // path not on disk → can't size it → fail open
         if (size > MAX_BYTES) {
@@ -306,7 +321,7 @@ function checkBash(input) {
     // `for f in a.ts b.ts; do cat "$f"; done` — the read target is the loop variable, so the
     // per-segment checkRangeRead (which keys off the file token) can't see it. Catch the shape:
     // a for/while whose in-list names gated files, with a range-read command in the loop body.
-    const loopAt = segTokens.findIndex(t => (t[0] === 'for' || t[0] === 'while') && t.some(x => GATED_EXT.test(unquote(x))));
+    const loopAt = segTokens.findIndex(t => (t[0] === 'for' || t[0] === 'while') && t.some(x => isEditable(unquote(x))));
     if (loopAt !== -1) {
         const doneAt = segTokens.findIndex((t, i) => i > loopAt && t.includes('done'));
         const body = segTokens.slice(loopAt + 1, doneAt === -1 ? undefined : doneAt);
@@ -324,7 +339,7 @@ function checkRead(input) {
     // A present `limit` OR `offset` is the escape hatch — either one shows the read is already a
     // deliberate slice, which is all this gate is trying to induce.
     if (typeof filePath !== 'string' || input.limit != null || input.offset != null) return;
-    if (!GATED_EXT.test(filePath)) return; // logs/markdown/… always pass
+    if (!CODE_EXT.test(filePath)) return; // prose, config, logs → read whole is fine
 
     const size = fileSize(filePath);
     if (size != null && size > MAX_BYTES) {
