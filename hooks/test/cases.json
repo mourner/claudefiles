@@ -228,11 +228,57 @@
     "denyMatch": "Read tool"
   },
   {
-    "name": "a sed range-read of a .md file is denied",
+    "name": "a sed range-read WITHOUT -n is denied (the range duplicates, it does not scope)",
     "tool_name": "Bash",
-    "tool_input": {"command": "sed -n '1,50p' notes.md"},
+    "tool_input": {"command": "sed '1,50p' notes.md"},
     "expect": "deny",
     "denyMatch": "not `sed`"
+  },
+  {
+    "name": "an unquoted scoped sed range-read of a .md file is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -n 12,80p notes.md"},
+    "expect": "allow"
+  },
+  {
+    "name": "sed -n with no line range is denied (a print script is not a window)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -n 'p' notes.md"},
+    "expect": "deny",
+    "denyMatch": "not `sed`"
+  },
+  {
+    "name": "a scoped sed range-read of a .ts file is still denied (code is gated in every form)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -n '1,50p' foo.ts"},
+    "expect": "deny",
+    "denyMatch": "not `sed`"
+  },
+  {
+    "name": "head of a .ts file is still denied (code is gated in every form)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "head -20 foo.ts"},
+    "expect": "deny",
+    "denyMatch": "not `head`"
+  },
+  {
+    "name": "tail of a .md file is allowed (a bounded suffix)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "tail -20 notes.md"},
+    "expect": "allow"
+  },
+  {
+    "name": "awk on a .md file is denied (an awk range is a program, not a window)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "awk 'NR<=50' notes.md"},
+    "expect": "deny",
+    "denyMatch": "not `awk`"
+  },
+  {
+    "name": "a scoped sed range-read of a .md file is allowed (the window Read would return anyway)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -n '1,50p' notes.md"},
+    "expect": "allow"
   },
   {
     "name": "cat of a .yml file is denied (config is editable)",
@@ -242,11 +288,10 @@
     "denyMatch": "Read tool"
   },
   {
-    "name": "head of a .txt file is denied",
+    "name": "head of a .txt file is allowed (head is always a bounded window)",
     "tool_name": "Bash",
     "tool_input": {"command": "head -20 notes.txt"},
-    "expect": "deny",
-    "denyMatch": "not `head`"
+    "expect": "allow"
   },
   {
     "name": "reading .md files in a for-loop is denied",

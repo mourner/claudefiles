@@ -9,7 +9,9 @@
 // Bash:
 //   - block bare whole-tree `grep`/`rg` for a symbol-looking pattern (scope it to a subdir)
 //   - block sed/awk/head/tail/cat range-reads of any editable file — code, prose or config
-//     (use the Read tool); logs and csv/tsv are exempt, they get tailed and awk'd, never edited
+//     (use the Read tool); logs and csv/tsv are exempt, they get tailed and awk'd, never edited.
+//     On prose an explicitly scoped read (`head`/`tail`, `sed -n 'A,Bp'`) is allowed — it is
+//     already what Read's offset+limit would return; only unscoped dumps (`cat`, `awk`) are blocked
 //   - block guessed grep targets that don't exist (use `find` first)
 //   - block `git show <ref>:<path>` whole-file dumps of a code/JSON file (use git checkout / sed)
 //   - block two-dot `git diff A..B` branch ranges (use three-dot A...B from the merge-base)
@@ -84,6 +86,8 @@ const PAGER = new Set(['less', 'more']);
 const GREP_FILTER_FLAG = /^(--include|--exclude|-g)(=|$)/; // a scoping flag → grep is already bounded
 const SHELL_EXPANSION = /[*?[\]{}$~`]/;                    // glob/$var/~/command-subst → not a static literal
 const SED_INPLACE = /^-i/;                                 // `sed -i`/`-i.bak` → an edit, not a read
+const SED_QUIET = /^-n/;                                   // `-n`/`-ne` → print only what the script says
+const SED_RANGE = /^\d+,(\d+|\$)p$/;                       // `12,80p` → an explicit line window
 // A *stdout* redirect: `>`/`>>`/`&>`/`foo>out`, but NOT a stderr-only `2>`/`2>&1` — those leave the
 // file content flowing to stdout (and into context), so they must not exempt a range-read. The
 // lookbehind also skips `<>`/`<<` and the second `>` of `>>`.
@@ -175,15 +179,39 @@ function checkGrep(tokens) {
 // (e.g. `sed 's/a/b/'` on stdin) pass.
 //
 // This applies regardless of file size — it is NOT a context-waste rule (small files included).
-// The Claude Code harness refuses to Edit a file that was not first read with the Read tool, so a
-// `cat foo.ts` forces a second, duplicate read before any edit can happen. Routing the first read
-// through the Read tool avoids that double-read. Hence: no size gate here, by design.
+// Three reasons, because the original one has weakened and a future reader will otherwise conclude
+// the rule is obsolete and delete it:
+//   1. The harness refuses to Edit a file that was not first read with the Read tool, so `cat
+//      foo.ts` forces a second, duplicate read before any edit can happen. This is the original
+//      rationale and it only binds when the edit goes through Edit/Write — under a bash-first
+//      workflow (`sed -i`, a python heredoc) there is no such requirement and no double read.
+//   2. Read paginates a large file and says so; `cat` dumps all of it with no ceiling. Since prose
+//      is deliberately exempt from the size gates above, this check is the only ceiling it has.
+//   3. Prose still tends to be edited through Edit in practice — sed expressions over markdown full
+//      of `*`, `/` and quotes are a good way to corrupt a line — so (1) keeps applying to it.
+// Hence: no size gate here, by design.
+// Whether an invocation reads a bounded window rather than dumping the file. `head`/`tail` always
+// do — they emit at most a fixed prefix or suffix, ten lines even with no flag. `sed` only does in
+// its `-n '<from>,<to>p'` form: without `-n` the range merely duplicates lines inside a full-stream
+// print, which is a whole-file dump wearing a range's clothes. `cat` has no range to give, and an
+// `awk` range is an arbitrary program rather than a line window, so neither can ever qualify.
+function isScopedRead(cmd, tokens) {
+    if (cmd === 'head' || cmd === 'tail') return true;
+    if (cmd !== 'sed') return false;
+    return tokens.some(t => SED_QUIET.test(t)) && tokens.map(unquote).some(t => SED_RANGE.test(t));
+}
+
 function checkRangeRead(tokens) {
     const ci = cmdAt(tokens);
     const cmd = tokens[ci];
     if (!RANGE_READ.has(cmd)) return;
     const target = tokens.slice(ci + 1).map(unquote).find(t => isEditable(t));
     if (!target) return;
+    // A scoped read of a prose file asks for exactly what Read's offset+limit would return, so
+    // denying it only routes the same bytes through another door. Code and JSON stay gated in every
+    // form: they are navigated by symbol rather than by line number, so a line window is usually the
+    // wrong request in the first place, and the double-read cost below is real for them.
+    if (PROSE_EXT.test(target) && isScopedRead(cmd, tokens)) return;
     // `sed -i`/`-i.bak`/`--in-place`, `gawk -i inplace` are edits, not reads — let them through.
     if (tokens.some(t => SED_INPLACE.test(t) || t === '--in-place')) return;
     // A redirect (`>`/`>>`) or heredoc (`<<EOF`) means output goes to a file / is a heredoc body,
