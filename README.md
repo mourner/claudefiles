@@ -3,8 +3,8 @@
 A few small [Claude Code](https://claude.com/claude-code) efficiency tools:
 
 - **statusline** — a cost & context-efficiency status line, a standalone bash script.
-- **guard** — a `PreToolUse` hook that blocks context-wasting tool calls and nudges
-  toward scoped alternatives.
+- **guard** — a small `PreToolUse` hook that blocks the few tool calls that clearly waste a
+  lot of context or answer the wrong question.
 - **js-perf-notes** — a skill: a reference of transferable JavaScript/V8 performance
   optimization principles, auto-consulted when profiling or optimizing hot code.
 
@@ -66,9 +66,9 @@ Add to `settings.json`:
 
 ## guard
 
-A single [`hooks/guard.mjs`](hooks/guard.mjs) that runs before every `Read`, `Bash`,
-`WebFetch`, and `LSP` call. When it recognizes a pattern that needlessly burns context, it
-blocks the call and returns a one-line reason pointing at the better tool.
+A single [`hooks/guard.mjs`](hooks/guard.mjs) that runs before every `Read`, `Bash` and
+`WebFetch` call. When it recognizes a call that would clearly burn context or answer the
+wrong question, it blocks it and returns a one-line reason naming the alternative.
 
 It only blocks patterns it's sure about. Anything it can't parse, a file it can't read, or
 an unexpected error all let the call through — the guard never blocks a call it doesn't
@@ -78,19 +78,13 @@ understand, so a bug in it can't bring your work to a halt.
 
 | Tool | Pattern blocked | Why / what to do instead |
 | --- | --- | --- |
-| Bash | tree-wide `grep`/`rg` for a symbol-looking pattern | Scans the whole tree. Scope it: `grep -n foo src/`. |
-| Bash | `cat`/`sed`/`awk`/`head`/`tail` of a code/JSON file | Use the Read tool — Edit needs a prior Read, so a `cat` only forces a duplicate read later. |
-| Bash | a `grep`/read at a path that doesn't exist | A blind guess. `find`/`ls` to locate it first. |
-| Bash | `find … -exec cat {}` | Dumps every matched file whole. Read the ones you need. |
-| Bash | reading gated files in a `for`/`while` loop | Dumps each matched file whole. Read the ones you need. |
-| Bash | `git show <ref>:<path>` of a large file | Dumps the whole file. Read the part you need. |
+| Bash | `cat` of a file over 64 KB, unpiped and unredirected | Goes straight into context. Filter it (`grep`, `jq`, `head`) or read a slice. |
 | Bash | two-dot `git diff A..B` | Compares endpoints, folding in unrelated changes. Use three-dot `A...B` (from the merge-base). |
-| Read | a code/JSON file over 16 KB, with no `limit` | Pulls the whole file. Pass a `limit` to scope the read. |
+| Read | a file over 64 KB, with no `limit`/`offset` | Pulls the whole file. Pass a `limit` to scope the read. |
 | WebFetch | a GitHub issue/PR/blob page | Noisy rendered HTML. Use the `gh` CLI or `raw.githubusercontent.com`. |
-| LSP | `workspaceSymbol`, or `documentSymbol` on a large file | Dumps the whole symbol table/tree. Use `grep`/`findReferences`. (Dormant unless an LSP plugin is enabled.) |
 
-The 16 KB size gate and the list of gated extensions are constants at the top of
-[`hooks/guard.mjs`](hooks/guard.mjs) — edit them there if your codebase wants different limits.
+The 64 KB ceiling is a constant at the top of [`hooks/guard.mjs`](hooks/guard.mjs) — edit it
+there if your work wants a different limit.
 
 ### Install (plugin)
 
@@ -109,7 +103,7 @@ If you'd rather not use the plugin, point a `PreToolUse` hook at the script dire
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash|WebFetch|LSP",
+        "matcher": "Read|Bash|WebFetch",
         "hooks": [
           { "type": "command", "command": "node \"$HOME/path/to/claudefiles/hooks/guard.mjs\"" }
         ]

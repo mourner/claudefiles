@@ -1,54 +1,47 @@
-// Generic PreToolUse guard for Read, Bash, WebFetch, and LSP. One script, dispatched by tool_name
-// at the bottom. Each check inspects tool_input and calls deny() to block the call; returning
-// without denying allows it. Fail-open by design: any parse/read error or unexpected throw → allow.
+// Generic PreToolUse guard for Read, Bash and WebFetch. One script, dispatched by tool_name at the
+// bottom. Each check inspects tool_input and calls deny() to block the call; returning without
+// denying allows it. Fail-open by design: any parse/read error or unexpected throw → allow.
 //
 // This is the machine-wide guard installed in ~/.claude. Project-specific guards (e.g. "use the
 // repo's npm test scripts, not bare vitest") live in a per-repo .claude/hooks/guard.mjs; Claude
 // Code runs every matching PreToolUse hook and blocks if any one denies, so the two compose.
 //
+// WHAT BELONGS HERE. A rule earns its place only if it rests on an invariant *outside* the harness —
+// git semantics, how GitHub serves HTML, the arithmetic of a context window. Rules that encoded
+// harness policy ("prefer the Read tool over cat", "Edit needs a prior Read") used to live here and
+// were removed: the harness changed under them, and in bash-first auto mode — where the system
+// prompt asks for cat/sed/grep and the Grep and Glob tools are gone — they inverted, costing a
+// round-trip to enforce a preference the platform no longer holds. A deny is never free: it costs
+// the failed call, the reason, and the retry, all re-sent for the rest of the session. So a rule
+// that fires on anything but a clear, large win is a net loss. Prefer deleting to tuning.
+//
 // Bash:
-//   - block bare whole-tree `grep`/`rg` for a symbol-looking pattern (scope it to a subdir)
-//   - block sed/awk/head/tail/cat range-reads of any editable file — code, prose or config
-//     (use the Read tool); logs and csv/tsv are exempt, they get tailed and awk'd, never edited.
-//     On prose an explicitly scoped read (`head`/`tail`, `sed -n 'A,Bp'`) is allowed — it is
-//     already what Read's offset+limit would return; only unscoped dumps (`cat`, `awk`) are blocked
-//   - block guessed grep targets that don't exist (use `find` first)
-//   - block `git show <ref>:<path>` whole-file dumps of a code/JSON file (use git checkout / sed)
+//   - block an unpiped, unredirected `cat` of a file over the size ceiling (it goes straight to
+//     context). Only `cat`: head/tail are bounded by construction, awk output is program-derived,
+//     and sed is how auto mode *edits* — gating it would block writes, not reads.
 //   - block two-dot `git diff A..B` branch ranges (use three-dot A...B from the merge-base)
 // Read:
-//   - block an unscoped read of a >16 KB code or JSON file (a present `limit`/`offset` is the
-//     escape hatch); prose and config are not size-gated — they are often wanted whole
+//   - block an unscoped read of a file over the size ceiling (a present `limit`/`offset` is the
+//     escape hatch). Read's own 2000-line cap covers ordinary files; this catches the long-line
+//     case — minified bundles, generated JSON — where few lines still mean hundreds of KB.
 // WebFetch:
 //   - block fetching a GitHub issue/PR/blob page (noisy rendered HTML) — use the gh CLI instead
-// LSP (dormant — plugin disabled by default, fires only if re-enabled):
-//   - hard-deny `workspaceSymbol`; deny `documentSymbol` on a large file
 
-import {existsSync, readFileSync, realpathSync, statSync} from 'fs';
+import {readFileSync, realpathSync, statSync} from 'fs';
 import {fileURLToPath} from 'url';
 
-// Block threshold in bytes. Bytes track context tokens (~4 chars/token) far better than line count,
-// which a verbose line or a minified one-liner both defeat. 16 KB leaves the typical 3–4 KB module
-// untouched and gates only the long tail where you almost always want a slice. Edit it here if your
-// codebase wants a different ceiling.
-const MAX_BYTES = 16 * 1024;
-
-// Extensions whose unscoped whole-file read wastes context: source code across common languages,
-// plus JSON/GeoJSON fixtures. Prose and data files (`.md/.txt/.log/.csv/.yaml/…`) stay exempt —
-// you usually do want the whole document. Add or remove extensions here as needed.
-// Code and structured-data formats: navigated by symbol, so a whole-file read is nearly always
-// more than was wanted. This is the list the SIZE gates use (checkRead, checkGitShow).
-const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|json|geojson|py|pyi|rb|go|rs|java|kt|kts|c|h|cc|cpp|cxx|hpp|hh|cs|php|swift|scala|clj|cljs|ex|exs|erl|hs|ml|lua|r|jl|dart|vue|svelte|sh|bash|zsh|sql|pl|pm|groovy|gradle|proto)$/i;
-
-// Prose, markup and config: legitimately read whole, but hand-edited as often as code. These join
-// the double-read checks and stay OUT of the size gates — gating a design doc or a yaml file just
-// yields an offset/limit covering the same bytes.
-const PROSE_EXT = /\.(md|mdx|markdown|txt|rst|adoc|ya?ml|toml|ini|cfg|conf|html?|css|scss|sass|less|xml|tf|tfvars)$/i;
-
-// Anything that might be hand-edited, and therefore anything whose first read must go through the
-// Read tool. Deliberately excludes logs, csv/tsv and jsonl: those get tailed and awk'd, never
-// edited, so there is no double read to prevent and blocking `awk -F, … data.csv` costs real work.
-// Extensionless files (Dockerfile, Makefile, .env) are a known gap — add a basename list if it bites.
-const isEditable = p => CODE_EXT.test(p) || PROSE_EXT.test(p);
+// Block threshold in bytes. Bytes track context tokens (~3–4 chars/token for code) far better than
+// line count, which a verbose line or a minified one-liner both defeat.
+//
+// 64 KB is ~18k tokens — too much to spend on one call, and past the point where anyone wants a file
+// whole rather than a region. The ceiling is deliberately just *under* the ~80 KB where Read's own
+// 2000-line cap starts truncating: at a measured median 41 bytes/line, that cap already handles
+// ordinary code above 80 KB, so a higher ceiling would only duplicate it. Below it the gate is the
+// sole defense — 3 in 4 large files run under 2000 lines, and `cat` has no cap at all.
+//
+// Calibrated against ~4,600 real source files: 64 KB is ~1 in 57, a backstop rate. Lower it toward
+// 48 KB to bite more often; going much past 64 KB starts letting real 80–120 KB source files through.
+const MAX_BYTES = 64 * 1024;
 
 // A deny is thrown (not written) so the checks can bail from deep in the call stack; decide() catches
 // it and returns the reason, while any *other* throw falls through to allow (fail-open).
@@ -59,11 +52,14 @@ function deny(reason) {
     throw new Deny(reason);
 }
 
-// Size of a file in bytes, or null if it can't be stat'd (caller fails open on null). Uses
-// `statSync` so we never read a multi-megabyte file into the hook just to measure it.
+// Size of a file in bytes, or null if it can't be stat'd — a missing path, a directory, or a token
+// the shell would have expanded (a glob, `$var`, `~`). Callers fail open on null, so no separate
+// existence or expansion check is needed. Uses `statSync` so we never read a multi-megabyte file
+// into the hook just to measure it.
 function fileSize(path) {
     try {
-        return statSync(path).size;
+        const st = statSync(path);
+        return st.isFile() ? st.size : null;
     } catch {
         return null;
     }
@@ -73,39 +69,23 @@ const kb = bytes => Math.round(bytes / 1024);
 
 // ── Bash ──────────────────────────────────────────────────────────────────────────────────────
 
-const SYMBOL = [
-    /^[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*$/, // camelCase
-    /^[A-Z][a-zA-Z0-9]*[a-z][a-zA-Z0-9]*$/, // PascalCase
-];
-const ALLOWLIST = /^(TODO|FIXME|HACK|XXX|NOTE)$/;
-const GREP = new Set(['grep', 'rg', 'egrep', 'fgrep']);
-const RANGE_READ = new Set(['cat', 'sed', 'awk', 'head', 'tail']);
-const PAGER = new Set(['less', 'more']);
-
 // Shared regexes, kept at module scope so they compile once rather than on every guard call.
-const GREP_FILTER_FLAG = /^(--include|--exclude|-g)(=|$)/; // a scoping flag → grep is already bounded
-const SHELL_EXPANSION = /[*?[\]{}$~`]/;                    // glob/$var/~/command-subst → not a static literal
-const SED_INPLACE = /^-i/;                                 // `sed -i`/`-i.bak` → an edit, not a read
-const SED_QUIET = /^-n/;                                   // `-n`/`-ne` → print only what the script says
-const SED_RANGE = /^\d+,(\d+|\$)p$/;                       // `12,80p` → an explicit line window
 // A *stdout* redirect: `>`/`>>`/`&>`/`foo>out`, but NOT a stderr-only `2>`/`2>&1` — those leave the
-// file content flowing to stdout (and into context), so they must not exempt a range-read. The
-// lookbehind also skips `<>`/`<<` and the second `>` of `>>`.
+// file content flowing to stdout (and into context). The lookbehind also skips `<>`/`<<` and the
+// second `>` of `>>`.
 const REDIRECT = /(?<![<2>])>/;
 const GIT_DIFF_RANGE = /^([\w@~^/.-]+)\.\.([\w@~^/.-]+)$/; // two-dot `A..B` ref range
 const HEREDOC_OPEN = /<<-?\s*['"]?(\w+)['"]?/;             // heredoc opener, capturing the delimiter
-// Shell command separators, including a single background `&` (`echo hi & grep …` runs both). The
-// lookarounds keep `&&` (handled by its own alternative), `2>&1`, `<&3` and `&>out` in one piece.
+// Shell command separators, including a single background `&` (`echo hi & cat big.json` runs both).
+// The lookarounds keep `&&` (handled by its own alternative), `2>&1`, `<&3` and `&>out` in one piece.
 const SEGMENT_SPLIT = /&&|\|\||;|\n|(?<![<>&])&(?![&>])/;
 const WHITESPACE = /\s+/;
 const DIGITS = /^\d+$/;
 
-const isSymbol = tok => typeof tok === 'string' && tok.length >= 4 && !ALLOWLIST.test(tok) && SYMBOL.some(rx => rx.test(tok));
-
 const unquote = s => s.length >= 2 && (s[0] === '"' || s[0] === '\'') && s.at(-1) === s[0] ? s.slice(1, -1) : s;
 
 // Shell keywords that can precede the real command word at the start of a segment (loop/conditional
-// bodies, subshells, negation). Stripping them lets us read `do cat "$f"` as a `cat` command.
+// bodies, subshells, negation). Stripping them lets us read `then git diff a..b` as a `git` command.
 const LEAD_KW = new Set(['do', 'then', 'else', 'elif', '{', '(', '!']);
 const stripLead = (tokens) => {
     let i = 0;
@@ -121,7 +101,7 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const DURATION = /^\d+(\.\d+)?[smhd]?$/; // `timeout 5`, `timeout 2.5s`
 
 // Index of the segment's effective command word, or -1. Checks key off this position so
-// `sudo grep …` is still a grep but `echo grep …` / `git commit -m "… grep …"` are not — a command
+// `sudo cat …` is still a cat but `echo cat …` / `git commit -m "… cat …"` are not — a command
 // merely *named* in another command's arguments isn't being run. Best-effort (a wrapper flag that
 // takes a value, like `sudo -u root`, derails it), which only ever fails open.
 function cmdAt(tokens) {
@@ -141,130 +121,24 @@ function cmdAt(tokens) {
     return -1;
 }
 
-function checkGrep(tokens) {
-    // The grep/rg must be the segment's effective command word. `git grep` (repo-scoped, exempt)
-    // and commands merely mentioning grep in their arguments (`git commit -m "… grep …"`) both
-    // fall out naturally: their command word isn't in GREP.
-    const gi = cmdAt(tokens);
-    if (gi === -1 || !GREP.has(tokens[gi])) return;
-
-    const positionals = [];
-    for (const t of tokens.slice(gi + 1)) {
-        if (GREP_FILTER_FLAG.test(t)) return; // a filter flag → already scoped
-        if (!t.startsWith('-')) positionals.push(unquote(t)); // skip other flags
-    }
-    const pattern = positionals[0];
-    if (!isSymbol(pattern)) return; // no pattern, or not symbol-shaped → fail open
-
-    // Bare = no path, or path is the whole tree (`.` / `./`).
-    const paths = positionals.slice(1).filter(p => p !== '.' && p !== './');
-    if (paths.length > 0) {
-        // A scoped grep is the escape hatch — UNLESS every target path is a literal that doesn't
-        // exist. That's a guaranteed-empty path-guess; one `find` to learn the layout beats
-        // flailing greps. Tokens the shell would expand (globs, $vars, ~, command subst) can't be
-        // resolved statically, so they don't count as literal — we fail open on those.
-        const literal = paths.filter(p => !SHELL_EXPANSION.test(p));
-        if (literal.length === paths.length && literal.every(p => !existsSync(p))) {
-            deny(`No such path: ${literal.join(', ')}. Use \`find\` to find the layout first.`);
-        }
-        return; // explicit existing subdir/file → scoped → allow
-    }
-
-    deny(`"${pattern}" looks like a symbol — scope it to a subdir: \`grep -n ${pattern} <dir>/\`. ` +
-        'For tree-wide references, use your editor\'s LSP find-references.');
-}
-
-// Block cat/sed/awk/head/tail used to read a code or JSON file into context — the Read tool
-// (offset/limit) does this cleanly. Only fires when such a path is present, so stream uses
-// (e.g. `sed 's/a/b/'` on stdin) pass.
-//
-// This applies regardless of file size — it is NOT a context-waste rule (small files included).
-// Three reasons, because the original one has weakened and a future reader will otherwise conclude
-// the rule is obsolete and delete it:
-//   1. The harness refuses to Edit a file that was not first read with the Read tool, so `cat
-//      foo.ts` forces a second, duplicate read before any edit can happen. This is the original
-//      rationale and it only binds when the edit goes through Edit/Write — under a bash-first
-//      workflow (`sed -i`, a python heredoc) there is no such requirement and no double read.
-//   2. Read paginates a large file and says so; `cat` dumps all of it with no ceiling. Since prose
-//      is deliberately exempt from the size gates above, this check is the only ceiling it has.
-//   3. Prose still tends to be edited through Edit in practice — sed expressions over markdown full
-//      of `*`, `/` and quotes are a good way to corrupt a line — so (1) keeps applying to it.
-// Hence: no size gate here, by design.
-// Whether an invocation reads a bounded window rather than dumping the file. `head`/`tail` always
-// do — they emit at most a fixed prefix or suffix, ten lines even with no flag. `sed` only does in
-// its `-n '<from>,<to>p'` form: without `-n` the range merely duplicates lines inside a full-stream
-// print, which is a whole-file dump wearing a range's clothes. `cat` has no range to give, and an
-// `awk` range is an arbitrary program rather than a line window, so neither can ever qualify.
-function isScopedRead(cmd, tokens) {
-    if (cmd === 'head' || cmd === 'tail') return true;
-    if (cmd !== 'sed') return false;
-    return tokens.some(t => SED_QUIET.test(t)) && tokens.map(unquote).some(t => SED_RANGE.test(t));
-}
-
-function checkRangeRead(tokens) {
+// `cat <big file>` with nowhere else to go sends every byte to stdout and therefore into context.
+// Scoped to `cat` alone, and only when the whole file really would land in context:
+//   - piped (`cat big.json | jq .deps`) → the downstream stage bounds what surfaces
+//   - redirected (`cat a b > merged`, `cat > f <<EOF`) → the bytes go to a file
+// The size gate does the rest of the false-positive suppression for free: the argument has to be a
+// real file on disk *and* over the ceiling, so a `cat` inside quoted text or a `$var` path that
+// can't be stat'd simply fails open. No extension list — a 300 KB anything is too big to dump.
+function checkBigCat(tokens) {
     const ci = cmdAt(tokens);
-    const cmd = tokens[ci];
-    if (!RANGE_READ.has(cmd)) return;
-    const target = tokens.slice(ci + 1).map(unquote).find(t => isEditable(t));
-    if (!target) return;
-    // A scoped read of a prose file asks for exactly what Read's offset+limit would return, so
-    // denying it only routes the same bytes through another door. Code and JSON stay gated in every
-    // form: they are navigated by symbol rather than by line number, so a line window is usually the
-    // wrong request in the first place, and the double-read cost below is real for them.
-    if (PROSE_EXT.test(target) && isScopedRead(cmd, tokens)) return;
-    // `sed -i`/`-i.bak`/`--in-place`, `gawk -i inplace` are edits, not reads — let them through.
-    if (tokens.some(t => SED_INPLACE.test(t) || t === '--in-place')) return;
-    // A redirect (`>`/`>>`) or heredoc (`<<EOF`) means output goes to a file / is a heredoc body,
-    // not into context — outside this guard's charter (and the matched path is the write target).
-    // Catch redirects with no surrounding spaces too (`cat a.json>out`): any unquoted `>` not part
-    // of a `<>`/`2>`-style construct still redirects output. `/[^<]>|^>/` matches a bare `>` token,
-    // a `foo>bar` token, and `>>`, while skipping a lone `<<EOF`.
-    if (tokens.some(t => t.startsWith('<<') || REDIRECT.test(t))) return;
-    // A literal path that doesn't exist is a guess — point at `find`, like checkGrep does. Tokens
-    // the shell would expand (globs, $vars, ~, command subst) can't be resolved statically, so we
-    // skip them and fall through to the Read nudge.
-    if (!SHELL_EXPANSION.test(target) && !existsSync(target)) {
-        deny(`No such path: ${target}. Use \`find\`/\`ls\` to locate it first.`);
-    }
-    deny(`Use the Read tool (\`offset\`+\`limit\`) to read, not \`${cmd}\`.`);
-}
-
-// `find … -exec cat {} \;` (or -execdir, or piping the matches into one) bulk-dumps every matched
-// file into context — the same whole-file dump checkRangeRead blocks, just fanned out by find. Fire
-// when a segment's first stage is `find` whose -exec/-execdir command is a RANGE_READ. Fail open on
-// anything else (a find with no range-read exec is fine).
-function checkFindExec(tokens) {
-    if (tokens[cmdAt(tokens)] !== 'find') return;
-    const ei = tokens.findIndex(t => t === '-exec' || t === '-execdir');
-    if (ei === -1) return;
-    if (RANGE_READ.has(tokens[ei + 1])) {
-        deny(`\`find … ${tokens[ei]} ${tokens[ei + 1]} …\` dumps every matched file whole. ` +
-            'Search across them with a scoped `rg <pattern> <paths>`, or read specific files with ' +
-            'the Read tool (`offset`+`limit`).');
-    }
-}
-
-// `git show <ref>:<path>` of a large code/JSON file dumps the whole file into context — usually a
-// hand-revert (then Write) that `git checkout <ref> -- <path>` does with zero content. Only fires
-// unpiped: `git show ...:... | sed -n` is a scoped inspect and is left alone (the caller's pipe
-// already bounds the volume).
-function checkGitShow(tokens) {
-    const gi = cmdAt(tokens);
-    if (gi === -1 || tokens[gi] !== 'git' || tokens[gi + 1] !== 'show') return;
-    for (const tok of tokens.slice(gi + 2)) {
+    if (ci === -1 || tokens[ci] !== 'cat') return;
+    for (const tok of tokens.slice(ci + 1)) {
         const t = unquote(tok);
         if (t.startsWith('-')) continue;
-        const ci = t.indexOf(':');
-        if (ci <= 0) continue; // need <ref>:<path>
-        const [ref, path] = [t.slice(0, ci), t.slice(ci + 1)];
-        if (!CODE_EXT.test(path)) return;
-        const size = fileSize(path); // on-disk size as a proxy for the <ref> blob
-        if (size == null) return; // path not on disk → can't size it → fail open
-        if (size > MAX_BYTES) {
-            deny(`\`git show ${ref}:${path}\` dumps the whole ${kb(size)} KB file. ` +
-                `To revert, \`git checkout ${ref} -- ${path}\`; to inspect, pipe to \`sed -n 'A,Bp'\`.`);
+        const size = fileSize(t);
+        if (size != null && size > MAX_BYTES) {
+            deny(`\`cat ${t}\` would put ${kb(size)} KB straight into context. Filter it instead ` +
+                '(`grep`, `jq`, `head`), or read a slice with the Read tool (`offset`+`limit`).');
         }
-        return;
     }
 }
 
@@ -273,6 +147,9 @@ function checkGitShow(tokens) {
 // spurious reversals). For "what THIS branch changed" you want three dots: `git diff A...B` diffs
 // from the merge-base. Only the two-dot range form is blocked; `git diff A B` (space) and explicit
 // paths like `git diff -- ../foo` are left alone. The escape hatch is the space form.
+//
+// Unlike everything else here this is a correctness rule, not a token rule: the two-dot form
+// silently answers a different question than the one being asked.
 function checkGitDiff(tokens) {
     const gi = cmdAt(tokens);
     if (gi === -1 || tokens[gi] !== 'git' || tokens[gi + 1] !== 'diff') return;
@@ -290,9 +167,10 @@ function checkGitDiff(tokens) {
 }
 
 // Drop heredoc bodies: their content is file data being written, not commands, so scanning them
-// (now that we split on newlines) would flag innocent script text like `find …` or `cat x.ts`.
-// We keep the opener line and drop everything up to the closing delimiter. Dropping only ever makes
-// us more permissive (fail-open), never causes a false deny — including if `<<` wasn't a heredoc.
+// (now that we split on newlines) would flag a script being authored that happens to contain
+// `git diff a..b`. We keep the opener line and drop everything up to the closing delimiter.
+// Dropping only ever makes us more permissive (fail-open), never causes a false deny — including
+// if `<<` wasn't a heredoc at all.
 function stripHeredocs(cmd) {
     const out = [];
     let delim = null;
@@ -313,50 +191,20 @@ function checkBash(input) {
     const cmd = stripHeredocs(input.command);
 
     // A command line can chain independent commands (`&&`, `||`, `;`, newlines) and open loop or
-    // conditional bodies (`for f in …; do cat "$f"; done`), each of which can read/dump on its own —
-    // so judging from the first command alone misses the rest. Split into segments, strip leading
-    // shell keywords, and run each check on the segment's first pipe stage (only that stage touches
-    // disk; later stages filter stdout). Best-effort: a separator inside quotes may mis-split, which
-    // only ever makes us fail open.
+    // conditional bodies, each of which can dump on its own — so judging from the first command
+    // alone misses the rest. Split into segments, strip leading shell keywords, and run each check
+    // on the segment's first pipe stage (only that stage touches disk; later stages filter stdout).
+    // Best-effort: a separator inside quotes may mis-split, which only ever makes us fail open.
     const segments = cmd.split(SEGMENT_SPLIT);
-    const segTokens = segments.map(s => stripLead(s.split('|')[0].split(WHITESPACE).filter(Boolean)));
 
-    for (let i = 0; i < segments.length; i++) {
-        const tokens = segTokens[i];
+    for (const segment of segments) {
+        const stages = segment.split('|');
+        const tokens = stripLead(stages[0].split(WHITESPACE).filter(Boolean));
         if (tokens.length === 0) continue;
-        const stages = segments[i].split('|');
-        const piped = stages.length > 1;
-        // A downstream pipe only bounds context when a stage actually *filters/derives* (grep, jq,
-        // wc, …) — that's why a piped grep is left alone (checkGrep keys off the first stage). But
-        // if every downstream stage is itself a raw slicer/pager (`cat x.ts | head -120`), the
-        // pipeline still dumps a chunk of the file — exactly what the Read tool does with
-        // offset+limit — so keep the range-read check on. git show stays exempt on any pipe (its
-        // own check treats a downstream `sed -n` as a scoped inspect).
-        const downstreamDumps = piped && stages.slice(1).every((s) => {
-            const c = stripLead(s.trim().split(WHITESPACE).filter(Boolean))[0];
-            return RANGE_READ.has(c) || PAGER.has(c);
-        });
-        if (!piped || downstreamDumps) checkRangeRead(tokens);
-        checkGrep(tokens);
-        checkFindExec(tokens);
         checkGitDiff(tokens);
-        // git show stays exempt on any pipe (its check treats a downstream `sed -n` as a scoped
-        // inspect) and on stdout redirection (`git show ref:file > out`) — the blob lands in a file,
-        // not context, which is a common A/B-benchmark move, not a hand-revert.
-        if (!piped && !REDIRECT.test(segments[i])) checkGitShow(tokens);
-    }
-
-    // `for f in a.ts b.ts; do cat "$f"; done` — the read target is the loop variable, so the
-    // per-segment checkRangeRead (which keys off the file token) can't see it. Catch the shape:
-    // a for/while whose in-list names gated files, with a range-read command in the loop body.
-    const loopAt = segTokens.findIndex(t => (t[0] === 'for' || t[0] === 'while') && t.some(x => isEditable(unquote(x))));
-    if (loopAt !== -1) {
-        const doneAt = segTokens.findIndex((t, i) => i > loopAt && t.includes('done'));
-        const body = segTokens.slice(loopAt + 1, doneAt === -1 ? undefined : doneAt);
-        if (body.some(t => RANGE_READ.has(t[cmdAt(t)]))) {
-            deny('Reading files in a loop dumps each one whole — read the parts you need with the ' +
-                'Read tool (`offset`+`limit`), or search across them with a scoped `rg <pattern> <paths>`.');
-        }
+        // A pipe or a stdout redirect means the bytes are bounded downstream or land in a file
+        // rather than in context — either way, outside this check's charter.
+        if (stages.length === 1 && !REDIRECT.test(segment)) checkBigCat(tokens);
     }
 }
 
@@ -367,7 +215,6 @@ function checkRead(input) {
     // A present `limit` OR `offset` is the escape hatch — either one shows the read is already a
     // deliberate slice, which is all this gate is trying to induce.
     if (typeof filePath !== 'string' || input.limit != null || input.offset != null) return;
-    if (!CODE_EXT.test(filePath)) return; // prose, config, logs → read whole is fine
 
     const size = fileSize(filePath);
     if (size != null && size > MAX_BYTES) {
@@ -407,24 +254,6 @@ function checkWebFetch(input) {
     }
 }
 
-// ── LSP (dormant safety net for if an LSP plugin is re-enabled) ──────────────────────────────────
-
-function checkLsp(input) {
-    if (input.operation === 'workspaceSymbol') {
-        deny('`workspaceSymbol` dumps the whole symbol table. Use `grep -n \'<name>\' <dir>/` or `findReferences`.');
-    }
-    if (input.operation !== 'documentSymbol') return;
-
-    const filePath = input.filePath;
-    if (typeof filePath !== 'string') return;
-
-    const size = fileSize(filePath);
-    if (size != null && size > MAX_BYTES) {
-        deny(`\`documentSymbol\` on a ${kb(size)} KB file dumps the whole tree — ` +
-            `use \`grep -n '<name>' ${filePath}\` for a known name.`);
-    }
-}
-
 // ── Decision core ───────────────────────────────────────────────────────────────────────────────
 
 // Pure entry point: given a hook payload, return the deny reason string, or null to allow. Fail-open
@@ -436,7 +265,6 @@ export function decide({tool_name: toolName, tool_input: toolInput} = {}) {
         if (toolName === 'Bash') checkBash(input);
         else if (toolName === 'Read') checkRead(input);
         else if (toolName === 'WebFetch') checkWebFetch(input);
-        else if (toolName === 'LSP') checkLsp(input);
     } catch (e) {
         if (e instanceof Deny) return e.reason;
         // parse/read error or check bug → fall through to allow

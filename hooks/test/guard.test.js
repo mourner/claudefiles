@@ -5,8 +5,13 @@
 //
 // Each case in cases.json is {name, tool_name, tool_input, expect: "allow"|"deny", denyMatch?}.
 // decide() returns the deny reason string, or null to allow. Cases reference fixture files
-// (foo.json, big.ts, src/, …) created in a temp dir; the test chdir's into it so the guard's
-// existsSync/statSync checks resolve against the fixtures.
+// (foo.json, big.ts, huge.json, src/, …) created in a temp dir; the test chdir's into it so the
+// guard's statSync checks resolve against the fixtures.
+//
+// Many cases assert an *allow* on a shape an earlier version of the guard blocked (tree-wide grep,
+// `find -exec cat`, `git show <ref>:<path>`, small-file `cat`). Those are not filler: bash-first
+// auto mode asks for exactly these, so they are the regressions that would hurt most if a future
+// rule crept back in.
 
 import {test, before, after} from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,24 +30,19 @@ let fixtures, cwd0;
 
 before(() => {
     fixtures = mkdtempSync(join(tmpdir(), 'guard-test-'));
-    // Small existing files of gated code extensions.
+    // Small files — under the ceiling, so nothing should fire on them.
     writeFileSync(join(fixtures, 'foo.json'), '{"x":1}\n');
-    writeFileSync(join(fixtures, 'foo.ts'), 'export const x = 1;\n');
-    writeFileSync(join(fixtures, 'foo.py'), 'x = 1\n');
-    // Files larger than the 16 KB gate.
-    const big = 'x'.repeat(20 * 1024);
-    writeFileSync(join(fixtures, 'big.ts'), big);
-    writeFileSync(join(fixtures, 'big.md'), big);
-    writeFileSync(join(fixtures, 'big.yml'), big);
-    // Prose and config: editable, so gated for range-reads, but never size-gated.
     writeFileSync(join(fixtures, 'notes.md'), '# notes\n');
-    writeFileSync(join(fixtures, 'other.md'), '# other\n');
-    writeFileSync(join(fixtures, 'notes.txt'), 'notes\n');
-    writeFileSync(join(fixtures, 'conf.yml'), 'a: 1\n');
-    // Data and logs: exempt from every check — they get awk'd and tailed, never hand-edited.
-    writeFileSync(join(fixtures, 'data.csv'), 'a,b\n1,2\n');
-    writeFileSync(join(fixtures, 'build.log'), 'boot\n');
-    // An existing directory for the scoped-grep case.
+    // Mid-size: comfortably over the *old* 16 KB gate and under the current one, so these pin the
+    // relaxation — they must stay allowed.
+    const mid = 'x'.repeat(20 * 1024);
+    writeFileSync(join(fixtures, 'big.ts'), mid);
+    writeFileSync(join(fixtures, 'big.md'), mid);
+    // Over the 128 KB ceiling.
+    const huge = 'x'.repeat(200 * 1024);
+    writeFileSync(join(fixtures, 'huge.json'), huge);
+    writeFileSync(join(fixtures, 'huge.md'), huge);
+    // A directory, to check that `cat <dir>` isn't treated as a file.
     mkdirSync(join(fixtures, 'src'));
     // The guard resolves relative paths against the cwd; run from the fixture dir.
     cwd0 = process.cwd();
@@ -73,9 +73,9 @@ function runCli(stdin) {
 }
 
 test('CLI: a deny writes the hook decision JSON to stdout', () => {
-    const out = runCli(JSON.stringify({tool_name: 'Bash', tool_input: {command: 'cat foo.json'}}));
+    const out = runCli(JSON.stringify({tool_name: 'Bash', tool_input: {command: 'cat huge.json'}}));
     assert.match(out, /"permissionDecision":"deny"/);
-    assert.match(out, /Read tool/);
+    assert.match(out, /straight into context/);
 });
 
 test('CLI: an allow writes nothing', () => {

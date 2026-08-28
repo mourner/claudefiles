@@ -1,127 +1,152 @@
 [
   {
-    "name": "bare grep for a symbol is denied (scope it)",
+    "name": "cat of a file over the ceiling is denied",
     "tool_name": "Bash",
-    "tool_input": {"command": "grep someSymbolName"},
+    "tool_input": {"command": "cat huge.json"},
     "expect": "deny",
-    "denyMatch": "looks like a symbol"
+    "denyMatch": "straight into context"
   },
   {
-    "name": "grep scoped to an existing dir is allowed",
-    "tool_name": "Bash",
-    "tool_input": {"command": "grep someSymbolName src/"},
-    "expect": "allow"
-  },
-  {
-    "name": "grep at a nonexistent path is denied as a path-guess",
-    "tool_name": "Bash",
-    "tool_input": {"command": "grep someSymbolName nope/"},
-    "expect": "deny",
-    "denyMatch": "No such path"
-  },
-  {
-    "name": "grep for an allowlisted word (TODO) is allowed",
-    "tool_name": "Bash",
-    "tool_input": {"command": "grep TODO"},
-    "expect": "allow"
-  },
-  {
-    "name": "git grep is exempt",
-    "tool_name": "Bash",
-    "tool_input": {"command": "git grep someSymbolName"},
-    "expect": "allow"
-  },
-  {
-    "name": "cat of an existing JSON file is denied (use Read)",
+    "name": "cat of a small file is allowed (no size, no rule)",
     "tool_name": "Bash",
     "tool_input": {"command": "cat foo.json"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of a mid-size file under the ceiling is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat big.ts"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of a huge file piped to a filter is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat huge.json | jq '.dependencies'"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of a huge file piped to head is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat huge.json | head -20"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of a huge file redirected to a file is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat huge.json > copy.json"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat of a huge file appended to a file is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat huge.json >> copy.json"},
+    "expect": "allow"
+  },
+  {
+    "name": "cat with a stderr-only redirect still dumps to context and is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "cat huge.json 2>/dev/null"},
     "expect": "deny",
-    "denyMatch": "Read tool"
+    "denyMatch": "straight into context"
   },
   {
-    "name": "cat with a spaced redirect is allowed (write target)",
+    "name": "sudo cat of a huge file is denied (wrapper is unwrapped)",
     "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.json > out"},
+    "tool_input": {"command": "sudo cat huge.json"},
+    "expect": "deny"
+  },
+  {
+    "name": "cat of a huge file after && is denied (later segments are checked)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "npm test && cat huge.json"},
+    "expect": "deny"
+  },
+  {
+    "name": "cat merely named in another command's arguments is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git commit -m 'stop using cat huge.json'"},
     "expect": "allow"
   },
   {
-    "name": "cat with a no-space redirect is allowed (write target)",
+    "name": "cat of a nonexistent path is allowed (unstattable → fail open)",
     "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.json>out"},
+    "tool_input": {"command": "cat nope.json"},
     "expect": "allow"
   },
   {
-    "name": "sed -i in-place edit is allowed",
+    "name": "cat of a glob is allowed (shell expansion → unstattable)",
     "tool_name": "Bash",
-    "tool_input": {"command": "sed -i 's/a/b/' foo.ts"},
+    "tool_input": {"command": "cat *.json"},
     "expect": "allow"
   },
   {
-    "name": "cat piped into jq (a filter) is allowed",
+    "name": "cat of a directory is allowed (not a regular file)",
     "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.json | jq .x"},
+    "tool_input": {"command": "cat src"},
     "expect": "allow"
   },
   {
-    "name": "cat piped into head (a slicer) is denied",
+    "name": "cat writing a heredoc to a file is allowed",
     "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.ts | head -50"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
+    "tool_input": {"command": "cat > out.txt <<EOF\nhello\nEOF"},
+    "expect": "allow"
   },
+
   {
-    "name": "a heredoc body containing cat foo.ts is allowed",
+    "name": "head of a huge file is allowed (bounded by construction)",
     "tool_name": "Bash",
-    "tool_input": {"command": "cat <<EOF\ncat foo.ts\nEOF"},
+    "tool_input": {"command": "head -100 huge.json"},
     "expect": "allow"
   },
   {
-    "name": "reading gated files in a for-loop is denied",
+    "name": "tail of a huge file is allowed (bounded by construction)",
     "tool_name": "Bash",
-    "tool_input": {"command": "for f in a.ts b.ts; do cat \"$f\"; done"},
-    "expect": "deny",
-    "denyMatch": "loop"
+    "tool_input": {"command": "tail -50 huge.json"},
+    "expect": "allow"
   },
   {
-    "name": "find -exec cat is denied (bulk dump)",
+    "name": "sed -n range read of a huge file is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -n '100,200p' huge.json"},
+    "expect": "allow"
+  },
+  {
+    "name": "sed -i edit of a huge file is allowed (auto mode edits with sed)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sed -i '' 's/foo/bar/g' huge.json"},
+    "expect": "allow"
+  },
+  {
+    "name": "awk over a huge file is allowed (output is program-derived)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "awk -F, '{s+=$2} END{print s}' huge.json"},
+    "expect": "allow"
+  },
+  {
+    "name": "grep over a huge file is allowed",
+    "tool_name": "Bash",
+    "tool_input": {"command": "grep -n someSymbolName huge.json"},
+    "expect": "allow"
+  },
+  {
+    "name": "bare tree-wide grep for a symbol is allowed (rule removed)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "grep -rn someSymbolName ."},
+    "expect": "allow"
+  },
+  {
+    "name": "find -exec cat is allowed (rule removed)",
     "tool_name": "Bash",
     "tool_input": {"command": "find . -name '*.ts' -exec cat {} \\;"},
-    "expect": "deny",
-    "denyMatch": "matched file"
-  },
-  {
-    "name": "Read of a >16KB .ts file without limit is denied",
-    "tool_name": "Read",
-    "tool_input": {"file_path": "big.ts"},
-    "expect": "deny",
-    "denyMatch": "too big"
-  },
-  {
-    "name": "Read of a >16KB .ts file with a limit is allowed",
-    "tool_name": "Read",
-    "tool_input": {"file_path": "big.ts", "limit": 100},
     "expect": "allow"
   },
   {
-    "name": "Read of a >16KB .md file is allowed (prose is not size-gated)",
-    "tool_name": "Read",
-    "tool_input": {"file_path": "big.md"},
+    "name": "git show of a file is allowed (rule removed)",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git show HEAD~3:big.ts"},
     "expect": "allow"
   },
-  {
-    "name": "WebFetch of a GitHub issue is denied (use gh)",
-    "tool_name": "WebFetch",
-    "tool_input": {"url": "https://github.com/o/r/issues/123"},
-    "expect": "deny",
-    "denyMatch": "gh issue view"
-  },
-  {
-    "name": "WebFetch of a GitHub blob is denied (use raw)",
-    "tool_name": "WebFetch",
-    "tool_input": {"url": "https://github.com/o/r/blob/main/x.ts"},
-    "expect": "deny",
-    "denyMatch": "raw.githubusercontent.com"
-  },
+
   {
     "name": "git diff with two dots is denied (folds in main-only changes)",
     "tool_name": "Bash",
@@ -136,204 +161,125 @@
     "expect": "allow"
   },
   {
-    "name": "cat of a .py file is denied (Python is gated too)",
+    "name": "git diff with a space-separated pair is allowed (the escape hatch)",
     "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.py"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
+    "tool_input": {"command": "git diff main feature"},
+    "expect": "allow"
   },
   {
-    "name": "grep named in another command's arguments is allowed",
+    "name": "git diff with a relative pathspec is allowed",
     "tool_name": "Bash",
-    "tool_input": {"command": "git commit -m \"fix grep someSymbolName handling\""},
+    "tool_input": {"command": "git diff -- ../src/foo.ts"},
     "expect": "allow"
   },
   {
     "name": "echo mentioning a two-dot git diff range is allowed",
     "tool_name": "Bash",
-    "tool_input": {"command": "echo git diff main..feature"},
+    "tool_input": {"command": "echo 'run git diff main..feature'"},
     "expect": "allow"
   },
   {
-    "name": "grep behind wrapper commands is still denied",
+    "name": "a two-dot git diff inside a heredoc body is allowed",
     "tool_name": "Bash",
-    "tool_input": {"command": "timeout 5 grep someSymbolName"},
-    "expect": "deny",
-    "denyMatch": "looks like a symbol"
-  },
-  {
-    "name": "grep after a background & separator is still denied",
-    "tool_name": "Bash",
-    "tool_input": {"command": "echo hello & grep someSymbolName"},
-    "expect": "deny",
-    "denyMatch": "looks like a symbol"
-  },
-  {
-    "name": "sudo cat of a gated file is denied",
-    "tool_name": "Bash",
-    "tool_input": {"command": "sudo cat foo.ts"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
-  },
-  {
-    "name": "a stderr-only redirect does not exempt a cat (2>/dev/null)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.ts 2>/dev/null"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
-  },
-  {
-    "name": "cat with 2>&1 is still denied (stdout still dumps)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.ts 2>&1"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
-  },
-  {
-    "name": "cat with an &> full redirect is allowed (write target)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "cat foo.json &> out"},
+    "tool_input": {"command": "cat > run.sh <<'EOF'\ngit diff main..feature\nEOF"},
     "expect": "allow"
   },
   {
-    "name": "Read with offset but no limit is allowed (slicing intent)",
+    "name": "git diff two-dot after a shell keyword is denied",
+    "tool_name": "Bash",
+    "tool_input": {"command": "if true; then git diff main..feature; fi"},
+    "expect": "deny"
+  },
+
+  {
+    "name": "Read of a file over the ceiling with no limit is denied",
     "tool_name": "Read",
-    "tool_input": {"file_path": "big.ts", "offset": 100},
-    "expect": "allow"
-  },
-  {
-    "name": "git show of a big file into context is denied (use checkout/sed)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "git show HEAD:big.ts"},
+    "tool_input": {"file_path": "huge.json"},
     "expect": "deny",
-    "denyMatch": "dumps the whole"
+    "denyMatch": "too big to read whole"
   },
   {
-    "name": "git show piped to a scoped inspect is allowed",
-    "tool_name": "Bash",
-    "tool_input": {"command": "git show HEAD:big.ts | sed -n '1,20p'"},
-    "expect": "allow"
-  },
-  {
-    "name": "git show redirected to a file is allowed (blob to disk, not context)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "git show HEAD:big.ts > scratchpad/old.ts"},
-    "expect": "allow"
-  },
-  {
-    "name": "cat of a .md file is denied (editable, so the first read must go through Read)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "cat notes.md"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
-  },
-  {
-    "name": "a sed range-read WITHOUT -n is denied (the range duplicates, it does not scope)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "sed '1,50p' notes.md"},
-    "expect": "deny",
-    "denyMatch": "not `sed`"
-  },
-  {
-    "name": "an unquoted scoped sed range-read of a .md file is allowed",
-    "tool_name": "Bash",
-    "tool_input": {"command": "sed -n 12,80p notes.md"},
-    "expect": "allow"
-  },
-  {
-    "name": "sed -n with no line range is denied (a print script is not a window)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "sed -n 'p' notes.md"},
-    "expect": "deny",
-    "denyMatch": "not `sed`"
-  },
-  {
-    "name": "a scoped sed range-read of a .ts file is still denied (code is gated in every form)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "sed -n '1,50p' foo.ts"},
-    "expect": "deny",
-    "denyMatch": "not `sed`"
-  },
-  {
-    "name": "head of a .ts file is still denied (code is gated in every form)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "head -20 foo.ts"},
-    "expect": "deny",
-    "denyMatch": "not `head`"
-  },
-  {
-    "name": "tail of a .md file is allowed (a bounded suffix)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "tail -20 notes.md"},
-    "expect": "allow"
-  },
-  {
-    "name": "awk on a .md file is denied (an awk range is a program, not a window)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "awk 'NR<=50' notes.md"},
-    "expect": "deny",
-    "denyMatch": "not `awk`"
-  },
-  {
-    "name": "a scoped sed range-read of a .md file is allowed (the window Read would return anyway)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "sed -n '1,50p' notes.md"},
-    "expect": "allow"
-  },
-  {
-    "name": "cat of a .yml file is denied (config is editable)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "cat conf.yml"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
-  },
-  {
-    "name": "head of a .txt file is allowed (head is always a bounded window)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "head -20 notes.txt"},
-    "expect": "allow"
-  },
-  {
-    "name": "reading .md files in a for-loop is denied",
-    "tool_name": "Bash",
-    "tool_input": {"command": "for f in notes.md other.md; do cat \"$f\"; done"},
-    "expect": "deny",
-    "denyMatch": "Read tool"
-  },
-  {
-    "name": "awk over a .csv is allowed (data stream, never hand-edited)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "awk -F, '{print $1}' data.csv"},
-    "expect": "allow"
-  },
-  {
-    "name": "tail of a .log is allowed",
-    "tool_name": "Bash",
-    "tool_input": {"command": "tail -50 build.log"},
-    "expect": "allow"
-  },
-  {
-    "name": "Read of a >16KB .yml file is allowed (config is not size-gated)",
+    "name": "Read of a huge file with a limit is allowed",
     "tool_name": "Read",
-    "tool_input": {"file_path": "big.yml"},
+    "tool_input": {"file_path": "huge.json", "limit": 200},
     "expect": "allow"
   },
   {
-    "name": "git show of a big .md file is allowed (size gate is code-only)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "git show HEAD:big.md"},
+    "name": "Read of a huge file with an offset is allowed",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "huge.json", "offset": 500},
     "expect": "allow"
   },
   {
-    "name": "sed -i on a .md file is allowed (an edit, not a read)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "sed -i '' s/a/b/ notes.md"},
+    "name": "Read of a mid-size code file under the ceiling is allowed",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "big.ts"},
     "expect": "allow"
   },
   {
-    "name": "cat of a .md redirected to a file is allowed (write target)",
-    "tool_name": "Bash",
-    "tool_input": {"command": "cat notes.md > copy.md"},
+    "name": "Read of a mid-size markdown file under the ceiling is allowed",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "big.md"},
+    "expect": "allow"
+  },
+  {
+    "name": "Read of a huge markdown file is denied (no extension list any more)",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "huge.md"},
+    "expect": "deny",
+    "denyMatch": "too big to read whole"
+  },
+  {
+    "name": "Read of a nonexistent file is allowed (fail open)",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "nope.ts"},
+    "expect": "allow"
+  },
+
+  {
+    "name": "WebFetch of a GitHub issue is denied (use gh)",
+    "tool_name": "WebFetch",
+    "tool_input": {"url": "https://github.com/mourner/leaflet/issues/1234"},
+    "expect": "deny",
+    "denyMatch": "gh issue view 1234"
+  },
+  {
+    "name": "WebFetch of a GitHub PR is denied (use gh)",
+    "tool_name": "WebFetch",
+    "tool_input": {"url": "https://github.com/mourner/leaflet/pull/99"},
+    "expect": "deny",
+    "denyMatch": "gh pr view 99"
+  },
+  {
+    "name": "WebFetch of a GitHub blob is denied (use raw)",
+    "tool_name": "WebFetch",
+    "tool_input": {"url": "https://github.com/mourner/leaflet/blob/main/src/Map.js"},
+    "expect": "deny",
+    "denyMatch": "raw.githubusercontent.com"
+  },
+  {
+    "name": "WebFetch of a GitHub repo root is allowed",
+    "tool_name": "WebFetch",
+    "tool_input": {"url": "https://github.com/mourner/leaflet"},
+    "expect": "allow"
+  },
+  {
+    "name": "WebFetch of a non-GitHub URL is allowed",
+    "tool_name": "WebFetch",
+    "tool_input": {"url": "https://example.com/docs/api"},
+    "expect": "allow"
+  },
+
+  {
+    "name": "an unknown tool is allowed",
+    "tool_name": "Grep",
+    "tool_input": {"pattern": "foo"},
+    "expect": "allow"
+  },
+  {
+    "name": "LSP is no longer guarded (plugin dormant, rule removed)",
+    "tool_name": "LSP",
+    "tool_input": {"operation": "workspaceSymbol"},
     "expect": "allow"
   }
 ]
