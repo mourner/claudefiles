@@ -9,8 +9,8 @@
     "test": "node --test"
   },
   "devDependencies": {
-    "@e18e/eslint-plugin": "^0.5.1",
-    "eslint": "^10.6.0",
+    "@e18e/eslint-plugin": "^0.8.0",
+    "eslint": "^10.9.1",
     "eslint-config-mourner": "^5.0.1"
   }
 }
