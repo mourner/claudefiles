@@ -177,7 +177,10 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # instead of slurping the file, which can be huge on long 1M-context sessions.
   # A "real" user prompt is string content that isn't a harness wrapper
   # (<command-*>, <local-command-*>, <system-reminder>), or array content with no
-  # tool_result — bare startswith("<") would misclassify pasted XML/HTML.
+  # tool_result — bare startswith("<") would misclassify pasted XML/HTML. The one
+  # wrapper that *is* a real prompt is <command-message>: a slash-command turn is
+  # the user typing, and excluding it left slash-driven sessions with no user
+  # prompt at all, so Δ never reset and subagent cost was dropped from it.
   # Sidechain rows (older Claude Code logs subagent traffic inline in the main
   # transcript, isSidechain: true) and meta rows (e.g. the session-start "Caveat:"
   # notice) look like plain-string user prompts but aren't — either would reset Δ
@@ -198,7 +201,7 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     def isUser: .type == "user" and (.isSidechain != true) and (.isMeta != true)
       and (.message.content as $c |
       if ($c | type) == "string"
-      then ($c | test("^<(command-|local-command-|system-reminder)") | not)
+      then ($c | test("^<command-message") or (test("^<(command-|local-command-|system-reminder)") | not))
       else ([$c[]?.type] | index("tool_result") | not) end);
     reduce inputs as $m ({t: 0, d: 0, ttl: 0, ts: "", cts: "", seen: {}};
       if   ($m | isUser)      then .d = 0 | .ts = ($m.timestamp // .ts)
@@ -221,9 +224,13 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
                then .cts = ($m.timestamp // .cts) else . end)
           end
       else . end)
-    | "\(.t) \(.d) \(.ttl) \(.ts) \(if .cts == "" then 0 else (.cts | sub("\\.[0-9]+Z$";"Z") | fromdateiso8601) end)"
+    | "\(.t) \(.d) \(.ttl) \(if .ts == "" then "-" else .ts end) \(if .cts == "" then 0 else (.cts | sub("\\.[0-9]+Z$";"Z") | fromdateiso8601) end)"
   ' "$TRANSCRIPT" 2>/dev/null)
   : "${T_MAIN:=0}"; : "${D_MAIN:=0}"; : "${CACHE_TTL:=0}"; : "${LAST_TS:=}"; : "${CACHE_TS:=0}"
+  # "-" sentinel: with an empty .ts the line would have two adjacent spaces and
+  # `read` (default IFS collapses whitespace runs) would shift CACHE_TS into LAST_TS,
+  # leaving the cache countdown to fall back to the transcript mtime.
+  [ "$LAST_TS" = "-" ] && LAST_TS=""
 
   # Subagents: all -> session; only those after LAST_TS -> current turn. If no user
   # prompt was found ($ts == ""), attribute nothing to the turn — an empty ts would

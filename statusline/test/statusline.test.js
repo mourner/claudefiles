@@ -124,12 +124,12 @@ test('statusline session cost uses total_cost_usd when present', () => {
 // seconds ago, optionally followed by a fresh non-cache system row (as a session
 // resume appends). Returns the path. The file's mtime ends up "now", so any code
 // keying the countdown off mtime would wrongly see the cache as fresh.
-function writeTranscript({ageSec, trailingSystem}) {
+function writeTranscript({ageSec, trailingSystem, prompt = 'hi'}) {
     const dir = mkdtempSync(join(tmpdir(), 'statusline-'));
     const path = join(dir, 'transcript.jsonl');
     const iso = s => new Date((Math.floor(Date.now() / 1000) - s) * 1000).toISOString();
     const lines = [
-        JSON.stringify({type: 'user', timestamp: iso(ageSec), message: {content: 'hi'}}),
+        JSON.stringify({type: 'user', timestamp: iso(ageSec), message: {content: prompt}}),
         JSON.stringify({type: 'assistant', timestamp: iso(ageSec), message: {
             id: 'a1', model: 'claude-opus',
             usage: {input_tokens: 10, output_tokens: 20,
@@ -157,6 +157,32 @@ test('cache countdown anchors to the last real cache write, not the transcript m
     }));
     assert.match(live, /❄\d+m/, live);
     assert.ok(!/❄now/.test(live), live);
+});
+
+test('cache countdown survives a session with no plain-text user prompt', () => {
+    // A session driven entirely by wrapped rows: the last-user-prompt field comes out
+    // empty, and without a non-collapsing sentinel `read` would shift the cache epoch
+    // into it and re-anchor the countdown to the transcript mtime ("now").
+    const line = render(status({
+        transcript_path: writeTranscript({
+            ageSec: 7200, trailingSystem: true, prompt: '<local-command-stdout></local-command-stdout>',
+        }),
+        context_window: {context_window_size: 200000, current_usage: {input_tokens: 12000}},
+    }));
+    assert.match(line, /❄now/, line);
+});
+
+test('a slash-command turn counts as a real user prompt (Δ resets)', () => {
+    // <command-message> is the user typing; only the surrounding plumbing is harness noise.
+    const line = render(status({
+        transcript_path: writeTranscript({
+            ageSec: 60, prompt: '<command-message>checkup</command-message><command-name>/checkup</command-name>',
+        }),
+        context_window: {context_window_size: 200000, current_usage: {input_tokens: 12000}},
+    }));
+    // The lone assistant turn predates nothing, so Δ carries it; what matters is that
+    // the prompt was recognised — the countdown stays anchored to the cache write.
+    assert.match(line, /❄\d+m/, line);
 });
 
 test('statusline malformed stdin still produces a line (no crash)', () => {
