@@ -22,10 +22,15 @@ input=$(cat)
 command -v jq >/dev/null || { echo "$(basename "$PWD") (statusline: jq not found)"; exit 0; }
 
 # Single source of truth for pricing: base input $/MTok per model family, matched as
-# a substring of the model id. All other rates are fixed ratios of base input across
-# the entire lineup: output 5x, cache read 0.1x, 5m cache write 1.25x, 1h cache
-# write 2x. Unknown future models fall back to Opus pricing.
+# a substring of the model id. Most other rates are fixed ratios of base input across
+# the entire lineup: output 5x, 5m cache write 1.25x, 1h cache write 2x. Cache read is
+# 0.1x everywhere except Fable 5.1, which reads cache at $0.25/MTok = 0.025x of its $10
+# input — so it gets its own CACHE_READ entry, matched the same way (most specific key
+# first, since "fable" also matches "fable-5-1"). Keys are regexes, so the 5.1 pattern
+# also covers a dotted or dateless spelling of the id. Unknown future models fall back
+# to Opus pricing and the 0.1x cache read.
 PRICES='{"fable": 10, "opus": 5, "sonnet": 3, "haiku": 1}'
+CACHE_READ='{"fable-?5[.-]1": 0.025}'
 
 # Every value goes through @sh — even the ones that are numbers today — so a
 # future payload-shape change (e.g. resets_at becoming an ISO string) yields a
@@ -132,7 +137,7 @@ TOKENS=$([ "$TOTAL" -ge 1000 ] && echo "$((TOTAL / 1000))k" || echo "$TOTAL")
 # Context tiers measure what context size does to quality and per-turn cost, and
 # neither depends on the window — quality noticeably degrades past ~100-200k on
 # every model, and each request re-reads the whole window (at 160k that's real
-# money per tool call even at the 0.1x cache-read rate). So the health bands are
+# money per tool call even at the 0.1x/0.025x cache-read rate). So the health bands are
 # identical everywhere: green <60k = fresh (baseline prompt + early work, don't
 # think about context), cyan <100k = normal working range, yellow <130k = drifting
 # (start watching for a natural breakpoint), orange = compact at the next clean
@@ -163,12 +168,14 @@ JQ_BURN='
     then ((u.cache_creation.ephemeral_5m_input_tokens // 0) * 1.25)
        + ((u.cache_creation.ephemeral_1h_input_tokens // 0) * 2)
     else ((u.cache_creation_input_tokens // 0) * 1.25) end;
-  def w(u): (u.input_tokens // 0) + cw(u)
-    + ((u.cache_read_input_tokens // 0) * 0.1)
+  def crr(m): ([$C | to_entries[] | select(. as $e | (m // "") | test($e.key)) | .value]
+    | first // 0.1);
+  def w(u; m): (u.input_tokens // 0) + cw(u)
+    + ((u.cache_read_input_tokens // 0) * crr(m))
     + ((u.output_tokens // 0) * 5);
   def price(m): ([$P | to_entries[] | select(. as $e | (m // "") | test($e.key)) | .value]
     | first // 5) / 1000000;
-  def cost(m): (w(m.message.usage) * price(m.message.model));
+  def cost(m): (w(m.message.usage; m.message.model) * price(m.message.model));
 '
 BURN_SESS_M=0; BURN_TURN_M=0; CACHE_TTL=0
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
@@ -197,7 +204,7 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # naive per-line sum double-counts (~2x on tool-using turns). `seen` keeps the
   # first occurrence of each id and skips the rest; rows without an id are counted
   # unconditionally (can't dedup, and the miss is rarer than collapsing them all).
-  read -r T_MAIN D_MAIN CACHE_TTL LAST_TS CACHE_TS < <(jq -rn --argjson P "$PRICES" "$JQ_BURN"'
+  read -r T_MAIN D_MAIN CACHE_TTL LAST_TS CACHE_TS < <(jq -rn --argjson P "$PRICES" --argjson C "$CACHE_READ" "$JQ_BURN"'
     def isUser: .type == "user" and (.isSidechain != true) and (.isMeta != true)
       and (.message.content as $c |
       if ($c | type) == "string"
@@ -242,7 +249,7 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   # "*.jsonl" that jq would choke on (previously only saved by the 2>/dev/null).
   shopt -s nullglob; SUB_FILES=("$SUB_DIR"/*.jsonl); shopt -u nullglob
   if [ "${#SUB_FILES[@]}" -gt 0 ]; then
-    read -r S_TOT S_TURN < <(jq -rn --argjson P "$PRICES" "$JQ_BURN"'
+    read -r S_TOT S_TURN < <(jq -rn --argjson P "$PRICES" --argjson C "$CACHE_READ" "$JQ_BURN"'
       reduce (inputs | select(.message.usage)) as $m ({tot: 0, turn: 0, seen: {}};
         (($m.message.id) // "") as $id
         | if ($id != "" and (.seen[$id] // false)) then .
@@ -275,8 +282,8 @@ BURN_SESS_FMT=$(fmt_cost "$BURN_SESS_M")
 BURN_TURN_FMT=$(fmt_cost "$BURN_TURN_M")
 
 # ---- Cache expiry countdown from last transcript activity ----
-# Reply within ❄<countdown> and the context re-reads from cache at 0.1x; once it
-# lapses the whole prompt is re-written at full 1.25x. A countdown ("4m") answers
+# Reply within ❄<countdown> and the context re-reads at the cheap cache-read rate (0.1x
+# of input, 0.025x on Fable 5.1); once it lapses the whole prompt is re-written at 1.25x. A countdown ("4m") answers
 # "should I hurry?" directly, where a wall-clock would force mental subtraction; the
 # 5s status-line refresh keeps it live. TTL was detected above from the actual
 # cache-write tier (1h on subscription main threads, 5m on API billing); until the

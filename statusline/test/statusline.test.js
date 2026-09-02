@@ -120,6 +120,28 @@ test('statusline session cost uses total_cost_usd when present', () => {
     assert.ok(line.includes('Σ$14.90'), line);
 });
 
+// Cache-read-only transcript for `model`, priced from the public table: 10M cached tokens
+// cost $10 on Fable 5 (0.1x of $10 input) but $2.50 on Fable 5.1 (cache read $0.25/MTok).
+function writeCacheReadTranscript(model) {
+    const dir = mkdtempSync(join(tmpdir(), 'statusline-'));
+    const path = join(dir, 'transcript.jsonl');
+    const iso = new Date().toISOString();
+    writeFileSync(path, `${[
+        JSON.stringify({type: 'user', timestamp: iso, message: {content: 'hi'}}),
+        JSON.stringify({type: 'assistant', timestamp: iso, message: {
+            id: 'a1', model, usage: {cache_read_input_tokens: 10000000},
+        }}),
+    ].join('\n')}\n`);
+    return path;
+}
+
+test('Fable 5.1 cache reads are priced at 0.025x, other models at 0.1x', () => {
+    const cost = model => render(status({transcript_path: writeCacheReadTranscript(model)}));
+    assert.ok(cost('claude-fable-5-1').includes('Σ$2.50'), cost('claude-fable-5-1'));
+    assert.ok(cost('claude-fable-5').includes('Σ$10.00'), cost('claude-fable-5'));
+    assert.ok(cost('claude-opus-5').includes('Σ$5.00'), cost('claude-opus-5'));
+});
+
 // Write a transcript JSONL with a single 1h-cache-writing assistant turn `ageSec`
 // seconds ago, optionally followed by a fresh non-cache system row (as a session
 // resume appends). Returns the path. The file's mtime ends up "now", so any code
