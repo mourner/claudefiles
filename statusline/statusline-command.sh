@@ -24,22 +24,23 @@ command -v jq >/dev/null || { echo "$(basename "$PWD") (statusline: jq not found
 # Single source of truth for pricing: base input $/MTok per model family, matched as
 # a substring of the model id. Most other rates are fixed ratios of base input across
 # the entire lineup: output 5x, 5m cache write 1.25x, 1h cache write 2x. Cache read is
-# 0.1x everywhere except Fable 5.1, which reads cache at $0.25/MTok = 0.025x of its $10
-# input — so it gets its own CACHE_READ entry, matched the same way (most specific key
-# first, since "fable" also matches "fable-5-1"). Keys are regexes, so the 5.1 pattern
-# also covers a dotted or dateless spelling of the id. Unknown future models fall back
-# to Opus pricing and the 0.1x cache read.
-PRICES='{"fable": 10, "opus": 5, "sonnet": 3, "haiku": 1}'
-CACHE_READ='{"fable-?5[.-]1": 0.025}'
+# 0.1x everywhere except Fable 5.1 ($0.25/MTok = 0.025x of its $10 input) and Opus 5.5
+# ($0.20/MTok = 0.05x of its $4 input) — so they get CACHE_READ entries, matched the same
+# way (most specific key first, since "opus" also matches "opus-5-5"). Keys are regexes,
+# so the versioned patterns also cover a dotted or dateless spelling of the id. Unknown
+# future models fall back to Opus 5 pricing and the 0.1x cache read.
+PRICES='{"fable": 10, "opus-?5[.-]5": 4, "opus": 5, "sonnet": 3, "haiku": 1}'
+CACHE_READ='{"fable-?5[.-]1": 0.025, "opus-?5[.-]5": 0.05}'
 
 # Every value goes through @sh — even the ones that are numbers today — so a
 # future payload-shape change (e.g. resets_at becoming an ISO string) yields a
 # harmlessly quoted assignment instead of a malformed/injectable eval.
-eval "$(echo "$input" | jq -r --argjson P "$PRICES" '
+eval "$(echo "$input" | jq -r --argjson P "$PRICES" --argjson C "$CACHE_READ" '
   (.model.id // "") as $id |
+  def rate(t; d): [t | to_entries[] | select(. as $e | $id | test($e.key)) | .value] | first // d;
   "MODEL=" + (.model.display_name // "?" | @sh),
   "MODEL_ID=" + ($id | @sh),
-  "PRICE=" + ([$P | to_entries[] | select(. as $e | $id | test($e.key)) | .value] | first // 5 | tostring | @sh),
+  "RATE=" + (rate($P; 5) * (rate($C; 0.1) + 0.1) * 100 | round | tostring | @sh),
   "EFFORT=" + (.effort.level // "" | @sh),
   "INP=" + (.context_window.current_usage.input_tokens // 0 | tostring | @sh),
   "CC=" + (.context_window.current_usage.cache_creation_input_tokens // 0 | tostring | @sh),
@@ -137,7 +138,7 @@ TOKENS=$([ "$TOTAL" -ge 1000 ] && echo "$((TOTAL / 1000))k" || echo "$TOTAL")
 # Context tiers measure what context size does to quality and per-turn cost, and
 # neither depends on the window — quality noticeably degrades past ~100-200k on
 # every model, and each request re-reads the whole window (at 160k that's real
-# money per tool call even at the 0.1x/0.025x cache-read rate). So the health bands are
+# money per tool call even at the discounted cache-read rate). So the health bands are
 # identical everywhere: green <60k = fresh (baseline prompt + early work, don't
 # think about context), cyan <100k = normal working range, yellow <130k = drifting
 # (start watching for a natural breakpoint), orange = compact at the next clean
@@ -283,8 +284,8 @@ BURN_TURN_FMT=$(fmt_cost "$BURN_TURN_M")
 
 # ---- Cache expiry countdown from last transcript activity ----
 # Reply within ❄<countdown> and the context re-reads at the cheap cache-read rate (0.1x
-# of input, 0.025x on Fable 5.1); once it lapses the whole prompt is re-written at 1.25x. A countdown ("4m") answers
-# "should I hurry?" directly, where a wall-clock would force mental subtraction; the
+# of input, 0.025x on Fable 5.1, 0.05x on Opus 5.5); once it lapses the whole prompt is
+# re-written at 1.25x. A countdown ("4m") answers "should I hurry?" directly, where a wall-clock would force mental subtraction; the
 # 5s status-line refresh keeps it live. TTL was detected above from the actual
 # cache-write tier (1h on subscription main threads, 5m on API billing); until the
 # first response reveals it, assume the conservative 5m. The countdown is rendered
@@ -353,19 +354,21 @@ if [ -n "$WEEK" ]; then
   LIMIT_SEG="${LIMIT_SEG:+$LIMIT_SEG | }$WK_SEG"
 fi
 
-# ---- Per-prompt cost multiplier (Opus low = 1x baseline) ----
-# Anchored to Opus low — the usual default driver — so 1x reads as "my normal" and
+# ---- Per-prompt cost multiplier (Opus 5.5 low = 1x baseline) ----
+# Anchored to Opus 5.5 low — the usual default driver — so 1x reads as "my normal" and
 # the number becomes a deviation signal: >1 means I'm spending more than usual this
-# turn, <1 means I'm economizing. (If your default isn't Opus low, change the 50
-# divisor below = baseline_model_price x baseline_effort_weight.) Derived from the
-# price table x an effort weight, so it tracks PRICES automatically: each effort
-# level costs roughly low 1x | medium 1.5x | high 2.5x | xhigh 3.5x | max 4x of the
-# same model's low. MULT is kept in tenths (x10) for one-decimal formatting without
-# floats; /50 (Opus price 5 x low weight 10) normalizes Opus low to 1.0x.
+# turn, <1 means I'm economizing. RATE is the model's effective price per token in
+# cents/MTok, input price x (cache read ratio + 0.1): agentic turns are ~97% cache
+# reads, and cache writes plus output add roughly another 0.1x of input on top. Pricing
+# by input alone would overstate models with cheap cache reads (Fable 5.1) and pricing
+# by cache read alone would understate them. Effort weights scale it: low 1x | medium
+# 1.5x | high 2.5x | xhigh 3.5x | max 4x of the same model's low. MULT is kept in
+# tenths (x10) for one-decimal formatting without floats; /60 (Opus 5.5 rate 60 x low
+# weight 10 / 10) normalizes Opus 5.5 low to 1.0x — change it if your default differs.
 case "$EFFORT" in
   low) W=10 ;; medium) W=15 ;; high) W=25 ;; xhigh) W=35 ;; max) W=40 ;; *) W=15 ;;
 esac
-MULT=$(( (PRICE * W * 10 + 25) / 50 ))
+MULT=$(( (RATE * W + 30) / 60 ))
 MCOLOR=$(tier_color5 "$MULT" 13 26 41 61)
 if [ $((MULT % 10)) -eq 0 ]; then
   MULT_FMT="$((MULT / 10))x"

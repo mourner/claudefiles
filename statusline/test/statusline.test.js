@@ -42,6 +42,14 @@ test('statusline renders the model label, effort, multiplier, context and cwd', 
     assert.equal(segs.at(-1), 'myproject');    // cwd basename
 });
 
+test('cost multiplier weighs cache read rates against the Opus 5.5 low baseline', () => {
+    const mult = (id, level) => render(status({model: {display_name: 'x', id}, effort: {level}})).split(' | ')[0].split(' ').at(-1);
+    assert.equal(mult('claude-opus-5-5', 'low'), '1x');
+    assert.equal(mult('claude-opus-5', 'low'), '1.7x');
+    assert.equal(mult('claude-fable-5-1', 'low'), '2.1x');
+    assert.equal(mult('claude-fable-5', 'low'), '3.3x');
+});
+
 test('statusline appends "1M" to the model label when the context window is 1M', () => {
     const line = render(status({
         model: {display_name: 'Fable', id: 'claude-fable-5'},
@@ -121,7 +129,8 @@ test('statusline session cost uses total_cost_usd when present', () => {
 });
 
 // Cache-read-only transcript for `model`, priced from the public table: 10M cached tokens
-// cost $10 on Fable 5 (0.1x of $10 input) but $2.50 on Fable 5.1 (cache read $0.25/MTok).
+// cost $10 on Fable 5 (0.1x of $10 input) but $2.50 on Fable 5.1 (cache read $0.25/MTok)
+// and $2 on Opus 5.5 (cache read $0.20/MTok).
 function writeCacheReadTranscript(model) {
     const dir = mkdtempSync(join(tmpdir(), 'statusline-'));
     const path = join(dir, 'transcript.jsonl');
@@ -135,11 +144,12 @@ function writeCacheReadTranscript(model) {
     return path;
 }
 
-test('Fable 5.1 cache reads are priced at 0.025x, other models at 0.1x', () => {
+test('Fable 5.1 and Opus 5.5 cache reads have own rates, other models 0.1x', () => {
     const cost = model => render(status({transcript_path: writeCacheReadTranscript(model)}));
     assert.ok(cost('claude-fable-5-1').includes('Σ$2.50'), cost('claude-fable-5-1'));
     assert.ok(cost('claude-fable-5').includes('Σ$10.00'), cost('claude-fable-5'));
     assert.ok(cost('claude-opus-5').includes('Σ$5.00'), cost('claude-opus-5'));
+    assert.ok(cost('claude-opus-5-5').includes('Σ$2.00'), cost('claude-opus-5-5'));
 });
 
 // Write a transcript JSONL with a single 1h-cache-writing assistant turn `ageSec`
