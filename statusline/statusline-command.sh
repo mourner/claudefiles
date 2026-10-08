@@ -24,13 +24,15 @@ command -v jq >/dev/null || { echo "$(basename "$PWD") (statusline: jq not found
 # Single source of truth for pricing: base input $/MTok per model family, matched as
 # a substring of the model id. Most other rates are fixed ratios of base input across
 # the entire lineup: output 5x, 5m cache write 1.25x, 1h cache write 2x. Cache read is
-# 0.1x everywhere except Fable 5.1 ($0.25/MTok = 0.025x of its $10 input) and Opus 5.5
-# ($0.20/MTok = 0.05x of its $4 input) — so they get CACHE_READ entries, matched the same
-# way (most specific key first, since "opus" also matches "opus-5-5"). Keys are regexes,
+# 0.1x everywhere except Fable 5.1 ($0.25/MTok = 0.025x of its $10 input) and Opus/Sonnet 5.5
+# ($0.20 and $0.10/MTok = 0.05x of their $4 and $2 input) — so they get CACHE_READ entries,
+# matched the same way (most specific key first, since "opus" also matches "opus-5-5").
+# Haiku 5.5 is priced in tiers by prompt size ($0.10 up to 100K tokens, $0.50 above); only
+# the lower tier is modeled here, so long-context Haiku 5.5 turns are undercounted 5x. Keys are regexes,
 # so the versioned patterns also cover a dotted or dateless spelling of the id. Unknown
 # future models fall back to Opus 5 pricing and the 0.1x cache read.
-PRICES='{"fable": 10, "opus-?5[.-]5": 4, "opus": 5, "sonnet": 3, "haiku": 1}'
-CACHE_READ='{"fable-?5[.-]1": 0.025, "opus-?5[.-]5": 0.05}'
+PRICES='{"fable": 10, "opus-?5[.-]5": 4, "opus": 5, "sonnet-?5": 2, "sonnet": 3, "haiku-?5[.-]5": 0.1, "haiku": 1}'
+CACHE_READ='{"fable-?5[.-]1": 0.025, "opus-?5[.-]5": 0.05, "sonnet-?5[.-]5": 0.05}'
 
 # Every value goes through @sh — even the ones that are numbers today — so a
 # future payload-shape change (e.g. resets_at becoming an ISO string) yields a
