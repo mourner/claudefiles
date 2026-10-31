@@ -230,6 +230,18 @@
     "denyMatch": "too big to read whole"
   },
   {
+    "name": "Read of a huge image is allowed (rendered downscaled, not as text)",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "huge.png"},
+    "expect": "allow"
+  },
+  {
+    "name": "Read of a huge PDF is allowed (Read pages it itself)",
+    "tool_name": "Read",
+    "tool_input": {"file_path": "huge.PDF"},
+    "expect": "allow"
+  },
+  {
     "name": "Read of a nonexistent file is allowed (fail open)",
     "tool_name": "Read",
     "tool_input": {"file_path": "nope.ts"},

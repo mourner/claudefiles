@@ -42,6 +42,8 @@ before(() => {
     const huge = 'x'.repeat(200 * 1024);
     writeFileSync(join(fixtures, 'huge.json'), huge);
     writeFileSync(join(fixtures, 'huge.md'), huge);
+    writeFileSync(join(fixtures, 'huge.png'), huge);
+    writeFileSync(join(fixtures, 'huge.PDF'), huge);
     // A directory, to check that `cat <dir>` isn't treated as a file.
     mkdirSync(join(fixtures, 'src'));
     // The guard resolves relative paths against the cwd; run from the fixture dir.

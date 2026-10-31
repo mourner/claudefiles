@@ -210,11 +210,16 @@ function checkBash(input) {
 
 // ── Read ──────────────────────────────────────────────────────────────────────────────────────
 
+const VISUAL_FILE = /\.(png|jpe?g|gif|webp|pdf)$/i;
+
 function checkRead(input) {
     const filePath = input.file_path;
     // A present `limit` OR `offset` is the escape hatch — either one shows the read is already a
     // deliberate slice, which is all this gate is trying to induce.
     if (typeof filePath !== 'string' || input.limit != null || input.offset != null) return;
+    // Read renders images (downscaled) and PDFs (by page) itself, so their byte size says nothing
+    // about how much context they take.
+    if (VISUAL_FILE.test(filePath)) return;
 
     const size = fileSize(filePath);
     if (size != null && size > MAX_BYTES) {
