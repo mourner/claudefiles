@@ -1,15 +1,14 @@
 #!/bin/bash
 # Claude Code status line — a cost & context efficiency dashboard. Example:
 #
-#   Fable 1M medium 3x | 5h:16% ↺2h | 7d:2% ↺3d | Δ10¢ Σ$14.90 | 169k ❄4m | skymap
+#   Fable 1M medium 3x | 5h:16% ↺2h | 7d:32% ↺3d 0.8x | Δ0.1% Σ2.4% | 169k ❄4m | skymap
 #
-# Segments, grouped by ` | ` and spaced within a group: model + effort + cost
-# multiplier vs Opus-low | rate limits w/ reset | Δ turn cost + Σ session cost |
-# context tokens + prompt-cache countdown | cwd. Universal across billing types:
-# rate-limit segments render only when
-# the account reports them, costs are computed from the session transcript at public
-# API prices, and the prompt-cache TTL is detected from actual usage — so seat,
-# enterprise, and API-key billing all work unmodified. Requires bash and jq.
+# Segments, grouped by ` | ` and spaced within a group: model + effort + cost multiplier vs Opus-low
+# | rate limits w/ reset and pace | Δ turn cost + Σ session cost (as a share of the 7d quota on seats)
+# | context tokens + prompt-cache countdown | cwd. Universal across billing types: rate-limit
+# segments render only when the account reports them, costs are computed from the session transcript
+# at public API prices, and the prompt-cache TTL is detected from actual usage — so seat, enterprise,
+# and API-key billing all work unmodified. Requires bash and jq.
 
 # All numeric parsing (printf %.0f, awk floats, jq output) assumes C-locale decimal
 # points; under e.g. de_DE printf rejects "16.4" outright.
@@ -24,15 +23,18 @@ command -v jq >/dev/null || { echo "$(basename "$PWD") (statusline: jq not found
 # Single source of truth for pricing: base input $/MTok per model family, matched as
 # a substring of the model id. Most other rates are fixed ratios of base input across
 # the entire lineup: output 5x, 5m cache write 1.25x, 1h cache write 2x. Cache read is
-# 0.1x everywhere except Fable 5.1 ($0.25/MTok = 0.025x of its $10 input) and Opus/Sonnet 5.5
+# 0.1x everywhere except Fable 5.1/5.2 (0.025x: $0.25 of $10, $0.20 of $8) and Opus/Sonnet 5.5
 # ($0.20 and $0.10/MTok = 0.05x of their $4 and $2 input) — so they get CACHE_READ entries,
 # matched the same way (most specific key first, since "opus" also matches "opus-5-5").
 # Haiku 5.5 is priced in tiers by prompt size ($0.10 up to 100K tokens, $0.50 above); only
 # the lower tier is modeled here, so long-context Haiku 5.5 turns are undercounted 5x. Keys are regexes,
 # so the versioned patterns also cover a dotted or dateless spelling of the id. Unknown
 # future models fall back to Opus 5 pricing and the 0.1x cache read.
-PRICES='{"fable": 10, "opus-?5[.-]5": 4, "opus": 5, "sonnet-?5": 2, "sonnet": 3, "haiku-?5[.-]5": 0.1, "haiku": 1}'
-CACHE_READ='{"fable-?5[.-]1": 0.025, "opus-?5[.-]5": 0.05, "sonnet-?5[.-]5": 0.05}'
+PRICES='{"fable-?5[.-]2": 8, "fable": 10, "opus-?5[.-]5": 4, "opus": 5, "sonnet-?5": 2, "sonnet": 3, "haiku-?5[.-]5": 0.1, "haiku": 1}'
+CACHE_READ='{"fable-?5[.-][12]": 0.025, "opus-?5[.-]5": 0.05, "sonnet-?5[.-]5": 0.05}'
+# Notional milli-$ per 1% of the 7d quota, measured from the usage log with Opus 5.5 (within ±5%
+# across mixed work); other plans may differ, and other models are assumed to burn at their price.
+WEEK_PCT_M=3000
 
 # Every value goes through @sh — even the ones that are numbers today — so a
 # future payload-shape change (e.g. resets_at becoming an ISO string) yields a
@@ -55,6 +57,7 @@ eval "$(echo "$input" | jq -r --argjson P "$PRICES" --argjson C "$CACHE_READ" '
   "WEEK_RESET=" + (.rate_limits.seven_day.resets_at // "" | tostring | @sh),
   "COST_USD=" + (.cost.total_cost_usd // "" | tostring | @sh),
   "TRANSCRIPT=" + (.transcript_path // "" | @sh),
+  "SESSION_ID=" + (.session_id // "" | @sh),
   "CWD=" + (.workspace.current_dir // "" | @sh)
 ')"
 
@@ -79,6 +82,12 @@ tier_color5() {
   elif [ "$1" -lt "$5" ]; then echo "$ORANGE"
   else                         echo "$RED"
   fi
+}
+
+# Format integer milli-dollars as a share of the 7d quota: one decimal under 10%, whole above.
+fmt_week_pct() {
+  local t=$((($1 + WEEK_PCT_M / 20) * 10 / WEEK_PCT_M))
+  if [ "$t" -lt 100 ]; then printf '%d.%d%%' $((t / 10)) $((t % 10)); else printf '%d%%' $((t / 10)); fi
 }
 
 # Cross-platform file mtime (GNU vs BSD stat)
@@ -110,12 +119,11 @@ fmt_reset() {
 
 # Burn-rate pace vs a linear budget line: used% / (% of window elapsed). 1.0 = dead
 # on the line, >1 = burning too fast (will hit the limit before reset), <1 = coasting.
-# Args: used%, reset-epoch, window-seconds. Echoes pace x10 (integer) only when it's
-# worth flagging — i.e. you're meaningfully over the line (>= PACE_WARN tenths) AND
-# far enough into the window for the extrapolation to mean anything (>= PACE_FLOOR of
-# it elapsed; early on, a tiny elapsed makes pace explode for no reason). Echoes ""
-# otherwise (coasting, at/over the limit, no reset, window not started, past reset,
-# or too early).
+# Args: used%, reset-epoch, window-seconds, min pace x10 to show. Echoes pace x10 (integer)
+# only when it's at least the minimum AND far enough into the window for the extrapolation to
+# mean anything (>= PACE_FLOOR of it elapsed; early on, a tiny elapsed makes pace explode for
+# no reason). Echoes "" otherwise (below minimum, at/over the limit, no reset, window not
+# started, past reset, or too early).
 PACE_WARN=11   # 1.1x — small dead zone above the 1.0 break-even so it doesn't flap
 PACE_FLOOR=10  # ignore the first 10% of the window
 fmt_pace() {
@@ -127,7 +135,7 @@ fmt_pace() {
   # pace = used / (elapsed/window * 100); x10 for one-decimal formatting w/o floats,
   # rounded to nearest tenth (+half-denominator before the divide)
   local p=$(( (used * $3 + elapsed * 5) / (elapsed * 10) ))
-  [ "$p" -lt "$PACE_WARN" ] && { echo ""; return; }
+  [ "$p" -lt "$4" ] && { echo ""; return; }
   echo "$p"
 }
 
@@ -271,6 +279,9 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
       printf "%d %d", (t + st) * 1000 + 0.5, (d + sd) * 1000 + 0.5 }')
   : "${BURN_SESS_M:=0}"; : "${BURN_TURN_M:=0}"
 fi
+# Transcript-derived Σ, kept apart from the override below for the usage log: it accumulates
+# across resumes, so per-session deltas stay monotonic.
+BURN_LOG_M=$BURN_SESS_M
 # Authoritative Σ override: total_cost_usd resets on each fresh `claude` launch
 # while the transcript persists across resumes, so the two can legitimately
 # diverge — when the field exists, it wins.
@@ -286,7 +297,7 @@ BURN_TURN_FMT=$(fmt_cost "$BURN_TURN_M")
 
 # ---- Cache expiry countdown from last transcript activity ----
 # Reply within ❄<countdown> and the context re-reads at the cheap cache-read rate (0.1x
-# of input, 0.025x on Fable 5.1, 0.05x on Opus 5.5); once it lapses the whole prompt is
+# of input, 0.025x on Fable 5.1/5.2, 0.05x on Opus 5.5); once it lapses the whole prompt is
 # re-written at 1.25x. A countdown ("4m") answers "should I hurry?" directly, where a wall-clock would force mental subtraction; the
 # 5s status-line refresh keeps it live. TTL was detected above from the actual
 # cache-write tier (1h on subscription main threads, 5m on API billing); until the
@@ -337,21 +348,27 @@ reset_aware_pct() {  # args: percentage, reset-epoch
   if [ -n "$2" ] && [ "$2" -le "$(date +%s)" ] 2>/dev/null; then echo 0; else echo "$1"; fi
 }
 
+# Pace badge from fmt_pace output (x10): plain under PACE_WARN, ⚠ orange above it, red >= 1.5x.
+fmt_pace_badge() {
+  [ -z "$1" ] && return
+  local c="" w=""
+  [ "$1" -ge "$PACE_WARN" ] && { w="⚠"; c=$([ "$1" -lt 15 ] && echo "$ORANGE" || echo "$RED"); }
+  printf ' %s%s%d.%dx%s' "$c" "$w" $(($1 / 10)) $(($1 % 10)) "$RESET"
+}
+
 LIMIT_SEG=""
 if [ -n "$FIVE_H" ]; then
   FH_INT=$(reset_aware_pct "$(printf '%.0f' "$FIVE_H")" "$FIVE_H_RESET")
   FH_COLOR=$(tier_color "$FH_INT" 50 75 90)
   FH_R=$(fmt_reset "$FIVE_H_RESET")
-  FH_P=$(fmt_pace "$FH_INT" "$FIVE_H_RESET" 18000)
-  FH_PF=""; [ -n "$FH_P" ] && { PC=$([ "$FH_P" -lt 15 ] && echo "$ORANGE" || echo "$RED"); FH_PF=" ${PC}⚠$((FH_P / 10)).$((FH_P % 10))x${RESET}"; }
+  FH_PF=$(fmt_pace_badge "$(fmt_pace "$FH_INT" "$FIVE_H_RESET" 18000 "$PACE_WARN")")
   LIMIT_SEG="5h:${FH_COLOR}${FH_INT}%${RESET}${FH_R:+ ↺$FH_R}${FH_PF}"
 fi
 if [ -n "$WEEK" ]; then
   WK_INT=$(reset_aware_pct "$(printf '%.0f' "$WEEK")" "$WEEK_RESET")
   WK_COLOR=$(tier_color "$WK_INT" 50 75 90)
   WK_R=$(fmt_reset "$WEEK_RESET")
-  WK_P=$(fmt_pace "$WK_INT" "$WEEK_RESET" 604800)
-  WK_PF=""; [ -n "$WK_P" ] && { PC=$([ "$WK_P" -lt 15 ] && echo "$ORANGE" || echo "$RED"); WK_PF=" ${PC}⚠$((WK_P / 10)).$((WK_P % 10))x${RESET}"; }
+  WK_PF=$(fmt_pace_badge "$(fmt_pace "$WK_INT" "$WEEK_RESET" 604800 0)")
   WK_SEG="7d:${WK_COLOR}${WK_INT}%${RESET}${WK_R:+ ↺$WK_R}${WK_PF}"
   LIMIT_SEG="${LIMIT_SEG:+$LIMIT_SEG | }$WK_SEG"
 fi
@@ -362,7 +379,7 @@ fi
 # turn, <1 means I'm economizing. RATE is the model's effective price per token in
 # cents/MTok, input price x (cache read ratio + 0.1): agentic turns are ~97% cache
 # reads, and cache writes plus output add roughly another 0.1x of input on top. Pricing
-# by input alone would overstate models with cheap cache reads (Fable 5.1) and pricing
+# by input alone would overstate models with cheap cache reads (Fable 5.1/5.2) and pricing
 # by cache read alone would understate them. Effort weights scale it: low 1x | medium
 # 1.5x | high 2.5x | xhigh 3.5x | max 4x of the same model's low. MULT is kept in
 # tenths (x10) for one-decimal formatting without floats; /60 (Opus 5.5 rate 60 x low
@@ -406,14 +423,35 @@ MODEL_GRP="$MODEL_GRP ${MCOLOR}${MULT_FMT}${RESET}"
 # user prompt and then grows in place as the status line re-runs (every ~5s) and the
 # transcript gains a usage row per tool round — so the turn cost ticks up live and
 # the layout never shifts. Below it would only flicker in/out between turns.
+# STATUSLINE_COST: 1 = always dollars, 0 = hide, auto (default) = dollars on API billing, and on
+# quota seats (rate limits reported) the same costs as an estimated share of the 7d quota instead.
 COST_GRP=""
-[ "$BURN_SESS_M" -gt 0 ] && COST_GRP="Δ${DCOLOR}${BURN_TURN_FMT}${RESET} Σ${SCOLOR}${BURN_SESS_FMT}${RESET}"
+SHOW_COST=${STATUSLINE_COST:-auto}
+[ "$SHOW_COST" = auto ] && SHOW_COST=$([ -z "$WEEK" ] && echo 1 || echo pct)
+if [ "$SHOW_COST" = pct ]; then
+  BURN_TURN_FMT=$(fmt_week_pct "$BURN_TURN_M"); BURN_SESS_FMT=$(fmt_week_pct "$BURN_SESS_M")
+fi
+[ "$SHOW_COST" != 0 ] && [ "$BURN_SESS_M" -gt 0 ] && COST_GRP="Δ${DCOLOR}${BURN_TURN_FMT}${RESET} Σ${SCOLOR}${BURN_SESS_FMT}${RESET}"
 
 # Context group: tokens, cache countdown. Suppressed until the session has actual
 # usage — before the first response TOTAL is 0 and the cache TTL is still unknown,
 # so the pair would read "0 ❄5m"/"0 ❄?"; better to show nothing than a placeholder.
 CTX_GRP=""
 [ "$TOTAL" -gt 0 ] && CTX_GRP="${TCOLOR_CTX}${TOKENS}${RESET} ❄${EXPIRY_COLOR}${EXPIRY_FMT}${RESET}"
+
+# ---- Usage log (quota seats only) ----
+# One line per change of (session cost, 5h%, 7d%) per session, to calibrate notional $ against
+# quota %: "epoch session milli-$ 5h% 7d% 5h-reset 7d-reset model". Lives in the config dir that
+# owns the transcript (~/.claude, or whatever CLAUDE_CONFIG_DIR points to), so separate config
+# dirs keep separate logs. Short appends are atomic under O_APPEND, so concurrent sessions are
+# safe without locking. Dedup only looks at the log's tail, so it stays cheap as the log grows.
+if [ -n "$WEEK" ] && [ -n "$SESSION_ID" ] && [[ "$TRANSCRIPT" == */projects/* ]]; then
+  USAGE_LOG="${TRANSCRIPT%/projects/*}/statusline-usage.log"
+  KEY="$SESSION_ID $BURN_LOG_M ${FIVE_H:--} $WEEK"
+  LAST=$(tail -n 300 "$USAGE_LOG" 2>/dev/null | grep -F " $SESSION_ID " | tail -n 1 | cut -d' ' -f2-5)
+  [ "$KEY" != "$LAST" ] && echo "$(date +%s) $KEY ${FIVE_H_RESET:--} ${WEEK_RESET:--} ${MODEL_ID:--}" \
+    >> "$USAGE_LOG" 2>/dev/null
+fi
 
 # Join non-empty groups with ` | `.
 LINE="$MODEL_GRP"

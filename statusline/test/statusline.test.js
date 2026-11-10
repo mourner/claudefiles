@@ -8,15 +8,17 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {mkdtempSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(here, '..', 'statusline-command.sh');
 
 // Run the script with a JSON status object and return its output with ANSI codes stripped.
-function render(status) {
-    const {stdout} = spawnSync('bash', [SCRIPT], {input: JSON.stringify(status), encoding: 'utf8'});
+function render(status, env = {}) {
+    const {stdout} = spawnSync('bash', [SCRIPT], {
+        input: JSON.stringify(status), encoding: 'utf8', env: {...process.env, ...env},
+    });
     // eslint-disable-next-line no-control-regex
     return (stdout ?? '').replace(/\[[0-9;]*m/g, '').trim();
 }
@@ -46,6 +48,7 @@ test('cost multiplier weighs cache read rates against the Opus 5.5 low baseline'
     const mult = (id, level) => render(status({model: {display_name: 'x', id}, effort: {level}})).split(' | ')[0].split(' ').at(-1);
     assert.equal(mult('claude-opus-5-5', 'low'), '1x');
     assert.equal(mult('claude-opus-5', 'low'), '1.7x');
+    assert.equal(mult('claude-fable-5-2', 'low'), '1.7x');
     assert.equal(mult('claude-fable-5-1', 'low'), '2.1x');
     assert.equal(mult('claude-fable-5', 'low'), '3.3x');
 });
@@ -123,6 +126,41 @@ test('statusline shows a burn-rate flag when over-pace, but not once at/over the
     assert.ok(!maxed.includes('⚠'), maxed);
 });
 
+test('weekly pace shows plain under the warning threshold, 5h pace only as a warning', () => {
+    const now = Math.floor(Date.now() / 1000);
+    // 7d: 3.5 of 7 days elapsed at 40% used → 0.8x; 5h: half elapsed at 40% → 0.8x, hidden
+    const line = render(status({
+        rate_limits: {
+            five_hour: {used_percentage: 40, resets_at: now + 9000},
+            seven_day: {used_percentage: 40, resets_at: now + 302400},
+        },
+    }));
+    assert.match(line, /5h:40% ↺2h\d+m \| 7d:40% ↺3d\d+h 0\.8x/, line);
+    assert.ok(!line.includes('⚠'), line);
+});
+
+test('costs show as a share of the 7d quota on quota accounts, dollars with STATUSLINE_COST=1', () => {
+    const quota = cost => status({cost: {total_cost_usd: cost}, rate_limits: {seven_day: {used_percentage: 2}}});
+    assert.ok(render(quota(14.9)).includes('Σ5.0%'), render(quota(14.9)));
+    assert.ok(render(quota(45)).includes('Σ15%'), render(quota(45)));
+    assert.ok(render(quota(14.9), {STATUSLINE_COST: '1'}).includes('Σ$14.90'));
+    assert.ok(!render(quota(14.9), {STATUSLINE_COST: '0'}).includes('Σ'));
+    assert.ok(!render(status({cost: {total_cost_usd: 14.9}}), {STATUSLINE_COST: '0'}).includes('Σ'));
+});
+
+test('quota accounts log usage changes next to the projects dir, deduped per session', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'statusline-'));
+    mkdirSync(join(dir, 'projects', 'p'), {recursive: true});
+    const transcript = join(dir, 'projects', 'p', 's1.jsonl');
+    writeFileSync(transcript, '');
+    const s = week => status({session_id: 's1', transcript_path: transcript,
+        rate_limits: {seven_day: {used_percentage: week}}});
+    render(s(2)); render(s(2)); render(s(3));
+    const lines = readFileSync(join(dir, 'statusline-usage.log'), 'utf8').trim().split('\n');
+    assert.equal(lines.length, 2, lines.join('\n'));
+    assert.match(lines[1], /^\d+ s1 0 - 3 - - claude-sonnet-4-6$/);
+});
+
 test('statusline session cost uses total_cost_usd when present', () => {
     const line = render(status({cost: {total_cost_usd: 14.9}}));
     assert.ok(line.includes('Σ$14.90'), line);
@@ -130,7 +168,7 @@ test('statusline session cost uses total_cost_usd when present', () => {
 
 // Cache-read-only transcript for `model`, priced from the public table: 10M cached tokens
 // cost $10 on Fable 5 (0.1x of $10 input) but $2.50 on Fable 5.1 (cache read $0.25/MTok)
-// and $2 on Opus 5.5 (cache read $0.20/MTok).
+// and $2 on Fable 5.2 and Opus 5.5 (cache read $0.20/MTok).
 function writeCacheReadTranscript(model) {
     const dir = mkdtempSync(join(tmpdir(), 'statusline-'));
     const path = join(dir, 'transcript.jsonl');
@@ -144,8 +182,9 @@ function writeCacheReadTranscript(model) {
     return path;
 }
 
-test('Fable 5.1 and Opus 5.5 cache reads have own rates, other models 0.1x', () => {
+test('Fable 5.1/5.2 and Opus 5.5 cache reads have own rates, other models 0.1x', () => {
     const cost = model => render(status({transcript_path: writeCacheReadTranscript(model)}));
+    assert.ok(cost('claude-fable-5-2').includes('Σ$2.00'), cost('claude-fable-5-2'));
     assert.ok(cost('claude-fable-5-1').includes('Σ$2.50'), cost('claude-fable-5-1'));
     assert.ok(cost('claude-fable-5').includes('Σ$10.00'), cost('claude-fable-5'));
     assert.ok(cost('claude-opus-5').includes('Σ$5.00'), cost('claude-opus-5'));
