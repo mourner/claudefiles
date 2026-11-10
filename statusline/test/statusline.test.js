@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -139,26 +139,38 @@ test('weekly pace shows plain under the warning threshold, 5h pace only as a war
     assert.ok(!line.includes('⚠'), line);
 });
 
+// HOME holding a .claude.json for the given plan (none: unknown plan, treated as Pro).
+function planHome(oauthAccount) {
+    const home = mkdtempSync(join(tmpdir(), 'statusline-home-'));
+    if (oauthAccount) writeFileSync(join(home, '.claude.json'), JSON.stringify({oauthAccount}));
+    return {HOME: home};
+}
+
 test('costs show as a share of the 7d quota on quota accounts, dollars with STATUSLINE_COST=1', () => {
     const quota = cost => status({cost: {total_cost_usd: cost}, rate_limits: {seven_day: {used_percentage: 2}}});
-    assert.ok(render(quota(14.9)).includes('Σ5.0%'), render(quota(14.9)));
-    assert.ok(render(quota(45)).includes('Σ15%'), render(quota(45)));
-    assert.ok(render(quota(14.9), {STATUSLINE_COST: '1'}).includes('Σ$14.90'));
-    assert.ok(!render(quota(14.9), {STATUSLINE_COST: '0'}).includes('Σ'));
+    const pro = planHome();
+    assert.ok(render(quota(11.25), pro).includes('Σ5.0%'), render(quota(11.25), pro));
+    assert.ok(render(quota(45), pro).includes('Σ20%'), render(quota(45), pro));
+    assert.ok(render(quota(14.9), {...pro, STATUSLINE_COST: '1'}).includes('Σ$14.90'));
+    assert.ok(!render(quota(14.9), {...pro, STATUSLINE_COST: '0'}).includes('Σ'));
     assert.ok(!render(status({cost: {total_cost_usd: 14.9}}), {STATUSLINE_COST: '0'}).includes('Σ'));
 });
 
-test('quota accounts log usage changes next to the projects dir, deduped per session', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'statusline-'));
-    mkdirSync(join(dir, 'projects', 'p'), {recursive: true});
-    const transcript = join(dir, 'projects', 'p', 's1.jsonl');
-    writeFileSync(transcript, '');
-    const s = week => status({session_id: 's1', transcript_path: transcript,
-        rate_limits: {seven_day: {used_percentage: week}}});
-    render(s(2)); render(s(2)); render(s(3));
-    const lines = readFileSync(join(dir, 'statusline-usage.log'), 'utf8').trim().split('\n');
-    assert.equal(lines.length, 2, lines.join('\n'));
-    assert.match(lines[1], /^\d+ s1 0 - 3 - - claude-sonnet-4-6$/);
+test('quota share scales with the plan read from .claude.json', () => {
+    const quota = status({cost: {total_cost_usd: 45}, rate_limits: {seven_day: {used_percentage: 2}}});
+    const share = acct => render(quota, planHome(acct)).match(/Σ(\S+)/)[1];
+    assert.equal(share({organizationType: 'claude_pro'}), '20%');
+    assert.equal(share({organizationType: 'claude_team', seatTier: 'team_standard'}), '16%');
+    assert.equal(share({organizationType: 'claude_max', userRateLimitTier: 'default_claude_max_5x'}), '4.0%');
+    assert.equal(share({organizationType: 'claude_max', userRateLimitTier: 'default_claude_max_20x'}), '1.0%');
+
+    // CLAUDE_CONFIG_DIR keeps .claude.json inside the config dir that owns the transcript.
+    const cfg = mkdtempSync(join(tmpdir(), 'statusline-cfg-'));
+    mkdirSync(join(cfg, 'projects', 'p'), {recursive: true});
+    writeFileSync(join(cfg, 'projects', 'p', 's.jsonl'), '');
+    writeFileSync(join(cfg, '.claude.json'), JSON.stringify({oauthAccount: {seatTier: 'team_premium'}}));
+    const line = render({...quota, transcript_path: join(cfg, 'projects', 'p', 's.jsonl')}, planHome());
+    assert.match(line, /Σ3\.2%/, line);
 });
 
 test('statusline session cost uses total_cost_usd when present', () => {

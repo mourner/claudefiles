@@ -16,7 +16,7 @@ efficiency-conscious sessions. At a glance, it shows how fast you're burning thr
 subscription quota, what the current turn and session cost, and when the prompt cache is about to
 expire:
 
-![Opus 1M medium 1.5x | 5h:16% ↺1h40m | 7d:46% ↺3d5h 0.8x | Δ0.1% Σ2.4% | 84k ❄32m | claudefiles](statusline/statusline.svg)
+![Opus 1M medium 1.5x | 5h:16% ↺1h40m | 7d:46% ↺3d5h 0.8x | Δ0.1% Σ3.2% | 84k ❄32m | claudefiles](statusline/statusline.svg)
 
 | Segment | Meaning |
 | --- | --- |
@@ -26,7 +26,7 @@ expire:
 | `7d:46% ↺3d5h` | weekly limit used, time until reset |
 | `0.8x` / `⚠1.3x` | pace: projected usage at reset, see below |
 | `Δ0.1%` | this turn's cost as a share of the weekly quota, climbing as the turn runs |
-| `Σ2.4%` | this session's cost, same |
+| `Σ3.2%` | this session's cost, same |
 | `84k` | context tokens in use |
 | `❄32m` | time until the prompt cache expires — after that, the next turn pays full price to rebuild it |
 | `claudefiles` | working directory |
@@ -40,12 +40,10 @@ with a `⚠` above `1.1x`; the 5-hour limit shows only the warning. Hidden in a 
 
 **Costs** are computed from the transcript at API list prices, so on a subscription they're
 notional, but still show which turns are expensive and what a model or effort change costs. On
-subscriptions they're shown as a share of the weekly quota at roughly $3 per 1% (`WEEK_PCT_M`,
-measured with Opus 5.5 — treat it as rough). On API billing, or with `STATUSLINE_COST=1`, they
-show in dollars; `STATUSLINE_COST=0` hides them.
-
-**Usage log.** On subscriptions, each session appends cost and limit changes to
-`statusline-usage.log` in the Claude config dir, for re-checking `WEEK_PCT_M` later.
+subscriptions they're shown as a share of the weekly quota, at roughly $2.25 per 1% on Pro,
+scaled by the plan's published quota multiple (Team Standard 1.25x, Max 5x, Team Premium 6.25x,
+Max 20x) read from `.claude.json`. Measured with Opus 5.5, so treat it as rough. On API billing,
+or with `STATUSLINE_COST=1`, they show in dollars; `STATUSLINE_COST=0` hides them.
 
 The picture is generated from real output with `npm run svg`.
 

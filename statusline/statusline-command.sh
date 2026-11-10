@@ -32,9 +32,9 @@ command -v jq >/dev/null || { echo "$(basename "$PWD") (statusline: jq not found
 # future models fall back to Opus 5 pricing and the 0.1x cache read.
 PRICES='{"fable-?5[.-]2": 8, "fable": 10, "opus-?5[.-]5": 4, "opus": 5, "sonnet-?5": 2, "sonnet": 3, "haiku-?5[.-]5": 0.1, "haiku": 1}'
 CACHE_READ='{"fable-?5[.-][12]": 0.025, "opus-?5[.-]5": 0.05, "sonnet-?5[.-]5": 0.05}'
-# Notional milli-$ per 1% of the 7d quota, measured from the usage log with Opus 5.5 (within ±5%
-# across mixed work); other plans may differ, and other models are assumed to burn at their price.
-WEEK_PCT_M=3000
+# Notional milli-$ per 1% of the 7d quota on a Pro-sized plan, measured with Opus 5.5 on a Team
+# Standard seat (~$2.8 per 1%, which has ~1.25x Pro's quota); other models burn at their price.
+WEEK_PCT_PRO_M=2250
 
 # Every value goes through @sh — even the ones that are numbers today — so a
 # future payload-shape change (e.g. resets_at becoming an ISO string) yields a
@@ -429,6 +429,15 @@ COST_GRP=""
 SHOW_COST=${STATUSLINE_COST:-auto}
 [ "$SHOW_COST" = auto ] && SHOW_COST=$([ -z "$WEEK" ] && echo 1 || echo pct)
 if [ "$SHOW_COST" = pct ]; then
+  # Scale by the plan's quota relative to Pro (published as rough multiples), read from the account
+  # info in .claude.json — inside CLAUDE_CONFIG_DIR when set, else next to ~/.claude.
+  CFG_DIR="${TRANSCRIPT%/projects/*}"
+  CFG_JSON="$CFG_DIR/.claude.json"; [ -f "$CFG_JSON" ] || CFG_JSON="$HOME/.claude.json"
+  PLAN=$(jq -r '.oauthAccount | "\(.organizationType) \(.seatTier) \(.userRateLimitTier)"' "$CFG_JSON" 2>/dev/null)
+  case "$PLAN" in # quota in quarters of Pro's
+    *max_20x*) Q=80 ;; *team_premium*) Q=25 ;; *max_5x*|*claude_max*) Q=20 ;; *team_standard*) Q=5 ;; *) Q=4 ;;
+  esac
+  WEEK_PCT_M=$((WEEK_PCT_PRO_M * Q / 4))
   BURN_TURN_FMT=$(fmt_week_pct "$BURN_TURN_M"); BURN_SESS_FMT=$(fmt_week_pct "$BURN_SESS_M")
 fi
 [ "$SHOW_COST" != 0 ] && [ "$BURN_SESS_M" -gt 0 ] && COST_GRP="Δ${DCOLOR}${BURN_TURN_FMT}${RESET} Σ${SCOLOR}${BURN_SESS_FMT}${RESET}"
