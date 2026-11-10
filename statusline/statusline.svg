@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="864" height="66" viewBox="0 0 864 66">
+<rect width="100%" height="100%" rx="8" fill="#132a33"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#8e9a9f" xml:space="preserve">
+<text x="16" y="25">Opus 1M medium <tspan fill="#4cc8e8">1.5x</tspan> <tspan fill="#4d636b">|</tspan> 5h:<tspan fill="#5fdc7e">16%</tspan> ↺1h40m <tspan fill="#4d636b">|</tspan> 7d:<tspan fill="#5fdc7e">46%</tspan> ↺3d5h 0.8x <tspan fill="#4d636b">|</tspan> Δ<tspan fill="#4cc8e8">0.1%</tspan> Σ<tspan fill="#4cc8e8">2.4%</tspan> <tspan fill="#4d636b">|</tspan> <tspan fill="#4cc8e8">84k</tspan> ❄32m <tspan fill="#4d636b">|</tspan> claudefiles</text>
+<text x="16" y="49">Fable 1M high <tspan fill="#f28c38">4.2x</tspan> <tspan fill="#4d636b">|</tspan> 5h:<tspan fill="#ff5f5f">92%</tspan> ↺1h40m <tspan fill="#f28c38">⚠1.4x</tspan> <tspan fill="#4d636b">|</tspan> 7d:<tspan fill="#4cc8e8">68%</tspan> ↺3d5h <tspan fill="#f28c38">⚠1.3x</tspan> <tspan fill="#4d636b">|</tspan> Δ<tspan fill="#ff5f5f">1.6%</tspan> Σ<tspan fill="#ff5f5f">13%</tspan> <tspan fill="#4d636b">|</tspan> <tspan fill="#ff5f5f">612k</tspan> ❄<tspan fill="#ff5f5f">3m</tspan> <tspan fill="#4d636b">|</tspan> claudefiles</text>
+</g>
+</svg>
