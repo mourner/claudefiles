@@ -26,8 +26,8 @@ Reading left to right:
 | | `3x` | roughly how much this model+effort costs per prompt, relative to Opus at low effort (the 1x baseline) |
 | limits | `5h:16% ↺2h` | 5-hour rate limit: used, and time until it resets (only when the account reports it) |
 | | `7d:2% ↺3d` | weekly rate limit: used, and time until it resets |
-| | `⚠1.4x` | burn-rate pace — appears next to a limit only when you're spending too fast to last until its reset (see below) |
-| cost | `Δ10¢` | this turn's cost — starts at zero each prompt and climbs as the turn runs |
+| | `0.8x` / `⚠1.4x` | burn-rate pace (see below) |
+| cost | `Δ10¢` | this turn's cost — starts at zero each prompt and climbs as the turn runs (as a share of the 7d quota on quota accounts, e.g. `Δ0.1%`, see below) |
 | | `Σ$14.90` | session cost so far |
 | context | `169k` | context tokens in use |
 | | `❄4m` | time left before the prompt cache expires — past it, the next turn pays full price to rebuild it instead of the 0.1x cached read |
@@ -37,12 +37,21 @@ Reading left to right:
 the dollar figures are *notional*, not what you're billed. They still track the *relative*
 weight of what you're doing — which turns are expensive, what a model or effort change costs —
 so they work as an efficiency signal even with no money on the line. The prompt-cache TTL is
-detected from actual usage.
+detected from actual usage. On quota-based accounts (those reporting a weekly limit) the costs
+are shown as an estimated share of the 7d quota instead, e.g. `Δ0.1% Σ5.0%`, at $3 notional per
+1% (`WEEK_PCT_M` in the script, measured with Opus 5.5 — other plans may differ). Set
+`STATUSLINE_COST=1` in the status line command to always show dollars, or `0` to hide them.
 
-**Burn-rate pace** (`⚠1.4x`) is `used% ÷ elapsed%` for a limit's window: `1.0x` is dead on a
-linear budget line, so `1.4x` means you'll hit the wall before reset if you keep the pace.
-Each limit gets its own badge, and it stays hidden unless worth acting on — only above `1.1x`,
-and never in a window's first 10% (`PACE_WARN` / `PACE_FLOOR` in the script).
+**Burn-rate pace** is `used% ÷ elapsed%` for a limit's window — i.e. your projected usage at
+reset: `1.0x` is dead on a linear budget line, so `1.4x` means you'll hit the wall before reset
+if you keep the pace. The weekly limit always shows it, plain below `1.1x` and as a `⚠` warning
+above. The 5-hour limit shows it only as a warning. Neither shows in a window's first 10%
+(`PACE_WARN` / `PACE_FLOOR` in the script).
+
+**Usage log.** On quota-based accounts, each session appends a line to
+`statusline-usage.log` in the Claude config dir (`~/.claude`, or `CLAUDE_CONFIG_DIR`) whenever
+its notional cost or the 5h/7d percentages change: `epoch session milli-$ 5h% 7d% 5h-reset
+7d-reset model`. It's raw data for re-checking `WEEK_PCT_M` after a plan or limit change.
 
 **Colors** run green → cyan → orange → red across segments, signaling fine → worth a glance.
 The cost multiplier, rate limits, tokens, cache TTL, and pace badge each carry their own
